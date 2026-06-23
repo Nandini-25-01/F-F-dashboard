@@ -1,0 +1,692 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>F&F & Attrition Dashboard</title>
+  <meta name="description"
+    content="A premium, real-time analytics dashboard for monitoring Full and Final (F&F) processes and Attrition metrics.">
+
+  <!-- Figtree Google Font -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Figtree:ital,wght@0,300..900;1,300..900&display=swap"
+    rel="stylesheet">
+
+  <!-- CSS Stylesheet -->
+  <link rel="stylesheet" href="style.css?v=37">
+
+  <!-- Chart.js CDN -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
+  <!-- SheetJS Excel Library Local with UMD Global export force -->
+  <script>
+    var temp_module = window.module;
+    var temp_exports = window.exports;
+    var temp_define = window.define;
+    window.module = undefined;
+    window.exports = undefined;
+    window.define = undefined;
+  </script>
+  <script src="xlsx.full.min.js"></script>
+  <script>
+    if (temp_module) window.module = temp_module;
+    if (temp_exports) window.exports = temp_exports;
+    if (temp_define) window.define = temp_define;
+  </script>
+</head>
+
+<body>
+
+  <!-- Top Navigation Header -->
+  <header class="app-header">
+    <div class="header-container">
+      <div class="brand">
+        <svg class="brand-icon" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"
+          stroke="currentColor">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+            d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+        </svg>
+        <div class="brand-text">
+          <h1>People Operations</h1>
+          <p>F&F & Attrition Dashboard</p>
+        </div>
+      </div>
+
+      <div class="sync-actions">
+        <div class="sync-status">
+          <span class="status-indicator"></span>
+          <span id="sync-status-text">Using demo data</span>
+        </div>
+        <button id="btn-sync-data" class="btn btn-primary">
+          <svg class="btn-icon" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"
+            stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+              d="M4 4v5h.582m15.356 2A8.001 8.001 0 1121.21 8H17m0 0V4" />
+          </svg>
+          Sync Data
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <main class="app-main">
+
+    <!-- Tab Controls & Quick Summary -->
+    <div class="navigation-row">
+      <div class="tabs-list" id="dashboard-tabs" role="tablist">
+        <button id="tab-ff" class="tab-button active" role="tab" aria-selected="true" aria-controls="view-ff">
+          Full & Final
+        </button>
+        <button id="tab-attrition" class="tab-button" role="tab" aria-selected="false" aria-controls="view-attrition">
+          Attrition Analysis
+        </button>
+      </div>
+    </div>
+
+    <!-- Filter Control Bar -->
+    <section class="filter-bar-container filter-bar-container-compact-ff" aria-label="Filters">
+      <div class="filter-bar">
+        <div class="filter-group">
+          <label for="filter-employee-type">Employee Type</label>
+          <div class="custom-dropdown" id="dropdown-employee-type">
+            <button class="dropdown-trigger" id="btn-filter-type">All Types</button>
+            <div class="dropdown-content">
+              <label class="dropdown-option">
+                <input type="checkbox" value="Onroll" checked> Onroll
+              </label>
+              <label class="dropdown-option">
+                <input type="checkbox" value="Consultant" checked> Consultant
+              </label>
+              <label class="dropdown-option">
+                <input type="checkbox" value="Intern" checked> Intern
+              </label>
+            </div>
+          </div>
+        </div>
+
+        <div class="filter-group">
+          <label for="filter-hrbp-lead">HRBP Lead</label>
+          <select id="select-hrbp-lead" class="filter-select">
+            <option value="All">All Leads</option>
+          </select>
+        </div>
+
+        <div class="filter-group">
+          <label for="select-pl-name">P&L Name</label>
+          <select id="select-pl-name" class="filter-select">
+            <option value="All">All Departments</option>
+          </select>
+        </div>
+
+        <div class="filter-group">
+          <label for="select-month">Month</label>
+          <select id="select-month" class="filter-select">
+            <option value="All">All Months</option>
+          </select>
+        </div>
+
+        <div class="filter-group">
+          <label for="select-year">Year</label>
+          <select id="select-year" class="filter-select">
+            <option value="All">All Years</option>
+            <option value="2025">2025</option>
+            <option value="2026">2026</option>
+          </select>
+        </div>
+
+        <div class="filter-group">
+          <label for="select-gender">Gender</label>
+          <select id="select-gender" class="filter-select">
+            <option value="All">All Genders</option>
+            <option value="Male">Male</option>
+            <option value="Female">Female</option>
+          </select>
+        </div>
+
+        <button id="btn-reset-filters" class="btn btn-secondary btn-icon-only hidden" title="Clear all filters">
+          <svg class="btn-icon" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"
+            stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+              d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+          </svg>
+          Reset
+        </button>
+      </div>
+    </section>
+
+    <!-- CONTENT VIEW 1: FULL & FINAL -->
+    <section id="view-ff" class="dashboard-view active" role="tabpanel" aria-labelledby="tab-ff">
+      <!-- KPI Metrics Card Grid -->
+      <div class="kpi-grid kpi-grid-compact-ff">
+        <div class="kpi-card">
+          <div class="kpi-header">
+            <h3>Total F&F Cases</h3>
+            <span class="kpi-badge neutral">F&F</span>
+          </div>
+          <p id="kpi-ff-total" class="kpi-value">0</p>
+          <p class="kpi-subtitle">Total exit processes initiated</p>
+        </div>
+
+        <div class="kpi-card">
+          <div class="kpi-header">
+            <h3>Pending Clearances</h3>
+            <span id="kpi-ff-pending-badge" class="kpi-badge warning">Active</span>
+          </div>
+          <p id="kpi-ff-pending" class="kpi-value">0</p>
+          <p class="kpi-subtitle">Pending departmental approvals</p>
+        </div>
+
+        <div class="kpi-card">
+          <div class="kpi-header">
+            <h3>Settlement Clearance</h3>
+            <span class="kpi-badge success">Completion</span>
+          </div>
+          <p id="kpi-ff-rate" class="kpi-value">0%</p>
+          <p class="kpi-subtitle">Settled of total cases</p>
+        </div>
+
+        <div class="kpi-card">
+          <div class="kpi-header">
+            <h3>Average TAT</h3>
+            <span class="kpi-badge info">Ageing</span>
+          </div>
+          <p id="kpi-ff-avg-tat" class="kpi-value">0d</p>
+          <p class="kpi-subtitle">Average F&F process ageing</p>
+        </div>
+
+      </div>
+
+      <!-- F&F Charts Grid -->
+      <div class="charts-row-compact-ff">
+        <div class="chart-card">
+          <div class="chart-title">
+            <h3>Ageing Buckets Breakdown</h3>
+            <p>F&F processing time group distribution</p>
+          </div>
+          <div class="chart-container-doughnut">
+            <canvas id="chart-ff-buckets"></canvas>
+          </div>
+        </div>
+
+        <div class="chart-card">
+          <div class="chart-title">
+            <h3>Payable vs Recovery split</h3>
+            <p>Percentage split of F&F payout types</p>
+          </div>
+          <div class="chart-container-doughnut">
+            <canvas id="chart-ff-payment-type"></canvas>
+          </div>
+        </div>
+
+        <div class="chart-card">
+          <div class="chart-title">
+            <h3>NDC Clearance</h3>
+            <p>Clearance date vs DOL gap distribution</p>
+          </div>
+          <div class="chart-container-doughnut">
+            <canvas id="chart-ff-ndc-clearance"></canvas>
+          </div>
+        </div>
+      </div>
+
+      <!-- Tables Side-by-Side Row -->
+      <div class="tables-row-compact-ff">
+        <!-- Left Table: Total F&F Payout by P&L -->
+        <div class="table-col-left">
+          <div class="chart-card compact-table-card">
+            <div class="chart-title">
+              <h3>Total F&F Payout by P&L</h3>
+              <p>Settlement payouts (in ₹) in descending order</p>
+            </div>
+            <div class="compact-table-container">
+              <table id="table-ff-payout-pl" class="compact-data-table">
+                <thead>
+                  <tr>
+                    <th>P&L Name</th>
+                    <th class="align-right">Total Payout</th>
+                  </tr>
+                </thead>
+                <tbody id="tbody-ff-payout-pl">
+                  <!-- JS-injected rows -->
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
+        <!-- Right Table: Recovery & Settlement Analysis by P&L Table -->
+        <div class="table-col-right">
+          <section class="table-section" aria-label="Recovery Analysis">
+            <div class="table-header-row">
+              <div class="table-title">
+                <h2>Recovery & Settlement Analysis by P&L Home</h2>
+              </div>
+              <div class="table-search-box">
+                <svg class="search-icon" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"
+                  stroke="currentColor">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                    d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                </svg>
+                <input type="text" id="search-recovery-table" class="search-input" placeholder="Search recovery table...">
+              </div>
+            </div>
+
+            <div class="table-container">
+              <table id="table-ff-recovery-analysis">
+                <thead>
+                  <tr>
+                    <th class="sortable" data-sort="plName">Department</th>
+                    <th class="sortable align-right" data-sort="totalRecovered">Amount Recovered (₹)</th>
+                    <th class="sortable align-right" data-sort="totalUnrecovered">Unrecovered Amount (₹)</th>
+                  </tr>
+                </thead>
+                <tbody id="tbody-ff-recovery-analysis">
+                  <!-- JS-injected rows -->
+                </tbody>
+              </table>
+            </div>
+            <div class="table-footer">
+              <span id="lbl-recovery-table-count">Showing 0 rows</span>
+            </div>
+          </section>
+        </div>
+      </div>
+
+    </section>
+
+    <!-- CONTENT VIEW 2: ATTRITION ANALYSIS -->
+    <section id="view-attrition" class="dashboard-view" role="tabpanel" aria-labelledby="tab-attrition">
+      <!-- KPI Metrics Card Grid -->
+      <div class="kpi-grid kpi-grid-compact-attrition">
+        <div class="kpi-card">
+          <div class="kpi-header">
+            <h3>Total Exits</h3>
+            <span class="kpi-badge neutral">Exits</span>
+          </div>
+          <p id="kpi-attrition-total" class="kpi-value">0</p>
+          <p class="kpi-subtitle">Exited employees in selected range</p>
+        </div>
+
+        <div class="kpi-card">
+          <div class="kpi-header">
+            <h3>Attrition Rate</h3>
+            <span class="kpi-badge info">Calculated</span>
+          </div>
+          <p id="kpi-attrition-rate" class="kpi-value">0.0%</p>
+          <p class="kpi-subtitle">Exits relative to total active count</p>
+        </div>
+
+        <div class="kpi-card">
+          <div class="kpi-header">
+            <h3>Dropout Cases</h3>
+            <span id="kpi-attrition-dropout-badge" class="kpi-badge danger">Tenure &lt; 90d</span>
+          </div>
+          <p id="kpi-attrition-dropout" class="kpi-value">0 (0.0%)</p>
+          <p class="kpi-subtitle">Early exits of total exiting staff</p>
+        </div>
+      </div>
+
+      <!-- Attrition Charts Grid -->
+      <div class="charts-row-compact-attrition">
+        <div class="chart-card">
+          <div class="chart-title">
+            <h3>Voluntary vs Involuntary</h3>
+            <p>Breakdown of exit decision types</p>
+          </div>
+          <div class="chart-container-doughnut">
+            <canvas id="chart-attrition-voluntary"></canvas>
+          </div>
+        </div>
+
+        <div class="chart-card">
+          <div class="chart-title">
+            <h3>Tenure Distribution</h3>
+            <p>Exited employees service length</p>
+          </div>
+          <div class="chart-container-doughnut">
+            <canvas id="chart-attrition-tenure"></canvas>
+          </div>
+        </div>
+
+        <div class="chart-card">
+          <div class="chart-title">
+            <h3>Attrition by HRBP</h3>
+            <p>Exits distribution & voluntary classification</p>
+          </div>
+          <div class="chart-container-bar">
+            <canvas id="chart-attrition-pl"></canvas>
+          </div>
+        </div>
+      </div>
+
+      <!-- Tables Side-by-Side Row -->
+      <div class="tables-row-compact-attrition">
+        <!-- Left Column: Employee Type and Reasons stacked -->
+        <div class="table-col-left">
+          <!-- Attrition by Employee Type -->
+          <div class="chart-card" style="margin-bottom: 0.4rem !important; padding: 0.5rem 0.75rem !important;">
+            <div class="chart-title" style="margin-bottom: 0.4rem !important;">
+              <h3 style="font-size: 0.813rem !important; margin: 0; font-weight: 600; color: var(--color-text-title);">Attrition by Employee Type</h3>
+            </div>
+            <div id="tbody-attrition-type" style="display: flex; gap: 0.5rem; width: 100%;">
+              <!-- JS-injected horizontal cards -->
+            </div>
+          </div>
+
+          <!-- Top Exit Reasons -->
+          <section class="table-section" id="reasons-summary-section" style="padding: 0.4rem 0.6rem; flex: 1;">
+            <div class="table-header-row" style="padding: 0 0 0.25rem 0 !important; border-bottom: 1px solid var(--color-border) !important; margin-bottom: 0.4rem; justify-content: space-between; flex-wrap: nowrap; gap: 0.5rem;">
+              <div class="table-title">
+                <h2 style="font-size: 0.813rem !important; margin: 0;">Top Exit Reasons by P&L Home</h2>
+              </div>
+              <div class="filter-group" style="min-width: 140px; flex: 0; gap: 0.1rem; flex-direction: row; align-items: center;">
+                <select id="reasons-pl-select" class="filter-select" style="font-size: 0.75rem; padding: 0.15rem 1.25rem 0.15rem 0.4rem; height: 24px; margin: 0;">
+                  <option value="All">All Departments</option>
+                </select>
+              </div>
+            </div>
+
+            <div class="reasons-grid" style="display: grid; grid-template-columns: 1fr 1fr; gap: 0.5rem; overflow-y: auto; flex: 1; min-height: 0;">
+              <div class="reason-column">
+                <h3 style="color: var(--status-success-text); font-size: 0.813rem; margin-bottom: 0.45rem; display: flex; align-items: center; gap: 0.25rem; font-weight:600;">
+                  <span style="width: 5px; height: 5px; background: var(--status-success-text); border-radius: 50%;"></span>
+                  Voluntary Exit Reasons
+                </h3>
+                <div id="voluntary-reasons-list" class="reasons-list">
+                  <!-- JS-injected list -->
+                </div>
+              </div>
+
+              <div class="reason-column">
+                <h3 style="color: var(--status-danger-text); font-size: 0.813rem; margin-bottom: 0.45rem; display: flex; align-items: center; gap: 0.25rem; font-weight:600;">
+                  <span style="width: 5px; height: 5px; background: var(--status-danger-text); border-radius: 50%;"></span>
+                  Involuntary Exit Reasons
+                </h3>
+                <div id="involuntary-reasons-list" class="reasons-list">
+                  <!-- JS-injected list -->
+                </div>
+              </div>
+            </div>
+          </section>
+        </div>
+
+        <!-- Right Column: Month-on-Month Exits table -->
+        <div class="table-col-right">
+          <section class="table-section scrollable" aria-label="MoM Exit Registry">
+            <div class="table-header-row">
+              <div class="table-title">
+                <h2>Month-on-Month Exits by Department</h2>
+              </div>
+              <div style="display: flex; gap: 0.35rem; align-items: center;">
+                <select id="select-mom-year" class="filter-select" style="padding: 0.15rem 1.25rem 0.15rem 0.4rem; font-size: 0.75rem; border-radius: 4px; width: 95px; height: 26px; margin: 0;">
+                  <option value="All">All Years</option>
+                  <option value="2025">2025</option>
+                  <option value="2026">2026</option>
+                </select>
+                <select id="select-mom-month" class="filter-select" style="padding: 0.15rem 1.25rem 0.15rem 0.4rem; font-size: 0.75rem; border-radius: 4px; width: 105px; height: 26px; margin: 0;">
+                  <option value="All">All Months</option>
+                </select>
+                <div class="table-search-box" style="margin: 0; min-width: 120px; position: relative;">
+                  <input type="text" id="search-mom-table" class="search-input" placeholder="Search MoM..." style="padding: 0.15rem 0.5rem 0.15rem 1.75rem; font-size: 0.75rem; height: 26px; width: 100%; border: 1px solid var(--color-border); border-radius: var(--radius-sm);">
+                  <svg class="search-icon" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" style="width: 12px; height: 12px; position: absolute; left: 0.5rem; top: 50%; transform: translateY(-50%); color: var(--color-text-muted);">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                  </svg>
+                </div>
+              </div>
+            </div>
+
+            <div class="table-container">
+              <table id="table-attrition-mom">
+                <thead>
+                  <tr>
+                    <th class="sortable" data-sort="plName">Department (P&L)</th>
+                    <th class="sortable" data-sort="month">Month</th>
+                    <th class="sortable align-right" data-sort="count">Exit Count</th>
+                    <th class="sortable align-right" data-sort="percent">% of Month Exits</th>
+                  </tr>
+                </thead>
+                <tbody id="tbody-attrition-mom">
+                  <!-- JS-injected rows -->
+                </tbody>
+              </table>
+            </div>
+            <div class="table-footer">
+              <span id="lbl-attrition-mom-count">Showing 0 rows</span>
+            </div>
+          </section>
+        </div>
+      </div>
+    </section>
+
+  </main>
+
+  <!-- Side Detail Drawer (Slides from right on table row click) -->
+  <aside id="clearance-drawer" class="drawer" aria-hidden="true" role="dialog" aria-modal="true"
+    aria-labelledby="drawer-title">
+    <div class="drawer-overlay" id="btn-close-drawer-overlay"></div>
+    <div class="drawer-content">
+      <div class="drawer-header">
+        <div class="drawer-title-group">
+          <h2 id="drawer-title">F&F Clearance Detail</h2>
+          <p id="drawer-subtitle">Case Details</p>
+        </div>
+        <button id="btn-close-drawer" class="drawer-close-btn" aria-label="Close details">
+          <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+          </svg>
+        </button>
+      </div>
+
+      <div class="drawer-body">
+        <section class="drawer-section">
+          <h3>Case Info</h3>
+          <div class="drawer-meta-grid">
+            <div class="meta-item">
+              <span class="meta-label">P&L Department</span>
+              <span id="drawer-emp-pl" class="meta-value">-</span>
+            </div>
+            <div class="meta-item">
+              <span class="meta-label">Last Working Day</span>
+              <span id="drawer-emp-lwd" class="meta-value">-</span>
+            </div>
+          </div>
+        </section>
+
+        <section class="drawer-section">
+          <h3>Settlement Summary</h3>
+          <div class="payout-summary-card">
+            <div class="payout-amount-row">
+              <span>Final Settlement Amount</span>
+              <strong id="drawer-payout-val">₹0</strong>
+            </div>
+            <div class="payout-status-row">
+              <span>Payout Date</span>
+              <span id="drawer-payout-date" class="status-tag">-</span>
+            </div>
+          </div>
+        </section>
+
+        <section class="drawer-section">
+          <h3>Clearance Approval Checklist</h3>
+          <div class="checklist-progress-container">
+            <div class="progress-bar">
+              <div id="drawer-checklist-bar" class="progress-fill" style="width: 0%"></div>
+            </div>
+            <span id="drawer-checklist-percent" class="progress-text">0% Approved</span>
+          </div>
+
+          <ul class="checklist-list">
+            <li class="checklist-item">
+              <div class="checklist-info">
+                <span class="checklist-name">IT Asset & Accounts</span>
+                <span class="checklist-desc">Return of laptop, keys, revoked access rights</span>
+              </div>
+              <span id="chk-it-status" class="checklist-badge">-</span>
+            </li>
+            <li class="checklist-item">
+              <div class="checklist-info">
+                <span class="checklist-name">Finance Clearance</span>
+                <span class="checklist-desc">Advance settlement, loans, tax declarations</span>
+              </div>
+              <span id="chk-finance-status" class="checklist-badge">-</span>
+            </li>
+            <li class="checklist-item">
+              <div class="checklist-info">
+                <span class="checklist-name">HR Exit Process</span>
+                <span class="checklist-desc">Exit interview completion, employee files</span>
+              </div>
+              <span id="chk-hr-status" class="checklist-badge">-</span>
+            </li>
+            <li class="checklist-item">
+              <div class="checklist-info">
+                <span class="checklist-name">Admin Clearance</span>
+                <span class="checklist-desc">ID cards returned, library/facility clear</span>
+              </div>
+              <span id="chk-admin-status" class="checklist-badge">-</span>
+            </li>
+          </ul>
+        </section>
+      </div>
+    </div>
+  </aside>
+
+  <!-- Sync Data Modal Overlay -->
+  <div id="sync-modal" class="modal" aria-hidden="true" role="dialog" aria-modal="true" aria-labelledby="modal-title">
+    <div class="modal-overlay" id="btn-close-modal-overlay"></div>
+    <div class="modal-content">
+      <div class="modal-header">
+        <h2 id="modal-title">Synchronize Dashboard Data</h2>
+        <button id="btn-close-modal" class="modal-close-btn" aria-label="Close sync modal">
+          <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+          </svg>
+        </button>
+      </div>
+
+      <div class="modal-body">
+        <p class="modal-desc">
+          Upload new F&F and Attrition logs to update the metrics and charts in real-time.
+          The dashboard expects either CSV or JSON formatted files matching the standard schemas.
+        </p>
+
+        <!-- Drag and Drop Zone -->
+        <div id="drop-zone" class="drop-zone">
+          <svg class="drop-icon" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"
+            stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+              d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
+          </svg>
+          <p class="drop-primary-text">Drag and drop file here, or <span class="browse-link">browse files</span></p>
+          <p class="drop-sub-text">Supports Excel (.xlsx), CSV or JSON (Max size 10MB)</p>
+          <input type="file" id="file-input" accept=".xlsx,.csv,.json" class="hidden">
+        </div>
+
+        <div id="upload-feedback" class="feedback-alert hidden">
+          <span id="feedback-icon" class="feedback-icon"></span>
+          <span id="feedback-text" class="feedback-text">Success message goes here</span>
+        </div>
+
+        <div class="modal-sections">
+          <div class="modal-section-info">
+            <h3>Format Guidelines</h3>
+            <p>Ensure file columns or object properties match these exact names:</p>
+            <ul>
+              <li><strong>F&F File columns:</strong> <code>employeeId</code>, <code>name</code>,
+                <code>employeeType</code>, <code>hrbpLead</code>, <code>plName</code>, <code>month</code>,
+                <code>lastWorkingDay</code>, <code>clearanceStatus</code>, <code>settlementAmount</code>,
+                <code>payoutDate</code>
+              </li>
+              <li><strong>Attrition File columns:</strong> <code>employeeId</code>, <code>name</code>,
+                <code>employeeType</code>, <code>hrbpLead</code>, <code>plName</code>, <code>month</code>,
+                <code>exitDate</code>, <code>exitType</code>, <code>reasonForLeaving</code>, <code>tenureMonths</code>,
+                <code>isRegrettable</code>
+              </li>
+            </ul>
+          </div>
+        </div>
+      </div>
+
+      <div class="modal-footer">
+        <div class="template-downloads">
+          <button id="btn-download-csv-template" class="btn btn-link">
+            Download CSV Templates
+          </button>
+          <button id="btn-download-json-template" class="btn btn-link">
+            Download JSON Templates
+          </button>
+        </div>
+        <div class="modal-control-buttons">
+          <button id="btn-reset-demo" class="btn btn-secondary">Reset to Demo Data</button>
+          <button id="btn-close-modal-footer" class="btn btn-primary-outline">Close</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Pivot Table Modal Overlay -->
+  <div id="pivot-modal" class="modal" aria-hidden="true" role="dialog" aria-modal="true"
+    aria-labelledby="pivot-modal-title">
+    <div class="modal-overlay" id="btn-close-pivot-overlay"></div>
+    <div class="modal-content" style="max-width: 800px; width: 100%;">
+      <div class="modal-header">
+        <h2 id="pivot-modal-title">Data Drilldown & Pivot Analysis</h2>
+        <button id="btn-close-pivot" class="modal-close-btn" aria-label="Close pivot modal">
+          <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+          </svg>
+        </button>
+      </div>
+
+      <div class="modal-body">
+        <p class="modal-desc" id="pivot-modal-desc"
+          style="margin-bottom: 1.5rem; font-weight: 500; color: var(--color-text-body);">
+          Select pivot fields to analyze records matching the selected chart slice.
+        </p>
+
+        <!-- Pivot Controls Row -->
+        <div class="pivot-controls"
+          style="display: flex; gap: 1.25rem; margin-bottom: 1.5rem; background: var(--color-bg-body); padding: 1.25rem; border-radius: var(--radius-md); border: 1px solid var(--color-border); flex-wrap: wrap;">
+          <div class="filter-group" style="flex: 1; min-width: 200px;">
+            <label for="pivot-row-field"
+              style="font-size: 0.688rem; font-weight: 600; color: var(--color-text-muted); text-transform: uppercase; letter-spacing: 0.05em; display: block; margin-bottom: 0.375rem;">Group
+              Rows By (P&L Home / HRBP Lead / Type)</label>
+            <select id="pivot-row-field" class="filter-select">
+              <option value="plName">P&L Home (Department)</option>
+              <option value="hrbpLead">HRBP Lead</option>
+              <option value="employeeType">Employee Type</option>
+              <option value="gender">Gender</option>
+            </select>
+          </div>
+          <div class="filter-group" style="flex: 1; min-width: 200px;">
+            <label for="pivot-value-metric"
+              style="font-size: 0.688rem; font-weight: 600; color: var(--color-text-muted); text-transform: uppercase; letter-spacing: 0.05em; display: block; margin-bottom: 0.375rem;">Summarize
+              Metric By</label>
+            <select id="pivot-value-metric" class="filter-select">
+              <option value="count">Case Count</option>
+              <option value="amount" id="pivot-opt-amount">Total Payout Amount (₹)</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="table-container"
+          style="max-height: 400px; overflow-y: auto; border: 1px solid var(--color-border); border-radius: var(--radius-md);">
+          <div id="pivot-table-container">
+            <!-- Dynamic JS injected table -->
+          </div>
+        </div>
+      </div>
+
+      <div class="modal-footer">
+        <div class="modal-control-buttons">
+          <button id="btn-close-pivot-footer" class="btn btn-secondary">Close</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Main JavaScript App Controller -->
+  <script src="app.js?v=37"></script>
+</body>
+
+</html>
