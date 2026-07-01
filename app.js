@@ -3128,9 +3128,17 @@ async function fetchGoogleSheetsAPI() {
 }
 
 async function fetchGoogleSheetsPublished() {
-    const { publishedUrl } = state.googleSheets;
+    let { publishedUrl } = state.googleSheets;
     if (!publishedUrl) {
         throw new Error('Published Spreadsheet URL is required for Published method.');
+    }
+
+    // Auto-detect standard Google Sheet URL and convert it to export link
+    const match = publishedUrl.match(/\/spreadsheets\/d\/([a-zA-Z0-9-_]+)/);
+    if (match && match[1]) {
+        const spreadsheetId = match[1];
+        publishedUrl = `https://docs.google.com/spreadsheets/d/${spreadsheetId}/export?format=xlsx`;
+        console.log("Auto-converted Google Sheet URL to direct Excel export link:", publishedUrl);
     }
 
     const response = await fetch(publishedUrl);
