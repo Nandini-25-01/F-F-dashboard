@@ -3,3 +3,11 @@
 node_modules/
 .idea/
 .vscode/
+credentials.json
+app.js.orig
+app.js.rej
+test_js_parsing.js
+~$Dashboard data.xlsx
+validate_data.py
+validate_local_data.py
+*.py

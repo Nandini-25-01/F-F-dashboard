@@ -4,26 +4,26 @@
 :root {
   --font-family: 'Figtree', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
 
-  /* Primary Minimalistic Blue Palette */
+  /* Corporate Tata 1mg Theme Palette (Coral & Black) */
   --color-bg-app: #ffffff;
   --color-bg-card: #ffffff;
-  --color-bg-body: #f8fafc;
-  /* Slate 50 */
+  --color-bg-body: #FCFAF7;
+  /* Warm cream/beige background */
 
-  --color-blue-primary: #064e3b;
-  /* Deep Green 900 */
-  --color-blue-accent: #10b981;
-  /* Accent Green 600 */
-  --color-blue-hover: #059669;
-  /* Darker Green 700 */
-  --color-blue-light: #ecfdf5;
-  /* Soft Green 50 */
-  --color-blue-border: #a7f3d0;
-  /* Soft Green Border 200 */
+  --color-blue-primary: #1A1A1A;
+  /* Stark black for strong contrast text/headers */
+  --color-blue-accent: #FF6F61;
+  /* Tata 1mg brand orange-coral */
+  --color-blue-hover: #E05F52;
+  /* Darker brand coral hover state */
+  --color-blue-light: #FFF5F4;
+  /* Soft peach/coral light background tint */
+  --color-blue-border: #FFE4E1;
+  /* Soft coral border tint */
 
   /* Text & Neutral Grays */
-  --color-text-title: #0f172a;
-  /* Slate 900 */
+  --color-text-title: #1E1E1E;
+  /* Slate 900/Charcoal black */
   --color-text-body: #334155;
   /* Slate 700 */
   --color-text-muted: #64748b;
@@ -33,6 +33,7 @@
   --color-border: #e2e8f0;
   /* Slate 200 */
   --color-border-hover: #cbd5e1;
+  /* Slate 300 */
   /* Slate 300 */
 
   /* Semantic Status Colors (Soft Backgrounds, High-Contrast Text) */
@@ -1663,6 +1664,10 @@ tbody tr:last-child td {
   background-color: var(--status-danger-text);
 }
 
+.reason-bar-fill.dropout {
+  background-color: var(--color-blue-accent);
+}
+
 /* Pivot table controls styling */
 .pivot-controls {
   margin-bottom: 1.5rem;
@@ -1988,6 +1993,10 @@ canvas {
   background-color: var(--status-danger-text);
 }
 
+.reason-bar-fill-compact.dropout {
+  background-color: var(--color-blue-accent);
+}
+
 /* ==========================================================================
    F&F COMPACT ONE-PAGER OVERRIDES
    ========================================================================== */
@@ -1997,7 +2006,7 @@ canvas {
 
 .kpi-grid-compact-ff {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: repeat(3, 1fr);
   gap: 0.5rem;
   margin-bottom: 0 !important;
 }
@@ -2007,15 +2016,48 @@ canvas {
   border-radius: var(--radius-md) !important;
 }
 
+.kpi-grid-compact-ff .kpi-card:nth-child(1),
+.kpi-grid-compact-ff .kpi-card:nth-child(3) {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  text-align: center;
+  padding: 0.5rem 0.75rem !important;
+}
+
+.kpi-grid-compact-ff .kpi-card:nth-child(1) .kpi-header,
+.kpi-grid-compact-ff .kpi-card:nth-child(3) .kpi-header {
+  justify-content: center;
+  gap: 0.5rem;
+  width: 100%;
+}
+
 .kpi-grid-compact-ff .kpi-value {
   font-size: 1.35rem !important;
   line-height: 1.1 !important;
   margin: 0.15rem 0 !important;
 }
 
+.kpi-grid-compact-ff .kpi-card:nth-child(1) .kpi-value,
+.kpi-grid-compact-ff .kpi-card:nth-child(3) .kpi-value {
+  font-size: 2.25rem !important;
+  font-weight: 800;
+  color: var(--color-blue-accent);
+  margin: 0.25rem 0 !important;
+  text-align: center;
+  width: 100%;
+}
+
 .kpi-grid-compact-ff .kpi-subtitle {
   font-size: 0.65rem !important;
   margin-top: 0 !important;
+}
+
+.kpi-grid-compact-ff .kpi-card:nth-child(1) .kpi-subtitle,
+.kpi-grid-compact-ff .kpi-card:nth-child(3) .kpi-subtitle {
+  text-align: center;
+  width: 100%;
 }
 
 .kpi-grid-compact-ff .kpi-header h3 {
@@ -2035,6 +2077,7 @@ canvas {
 }
 
 .tables-row-compact-ff {
+  grid-column: 1 / -1;
   display: flex;
   gap: 0.5rem;
   width: 100%;
@@ -2090,6 +2133,11 @@ canvas {
   font-size: 0.75rem !important;
 }
 
+.tables-row-compact-ff table th {
+  white-space: normal !important;
+  vertical-align: middle;
+}
+
 /* Ensure F&F charts inside the row are extremely compact */
 .charts-row-compact-ff .chart-container-doughnut,
 .charts-row-compact-ff .chart-container-horizontal-bar {
@@ -2129,7 +2177,7 @@ canvas {
    ========================================================================== */
 .kpi-grid-compact-attrition {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(2, 1fr);
   gap: 0.5rem;
   margin-bottom: 0 !important;
 }
@@ -2324,4 +2372,144 @@ canvas {
   font-size: 0.688rem;
   font-weight: 500;
   color: var(--color-text-muted);
+}
+
+/* Switch toggle styles */
+.switch {
+  position: relative;
+  display: inline-block;
+  width: 44px;
+  height: 22px;
+}
+
+.switch input {
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+
+.slider {
+  position: absolute;
+  cursor: pointer;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background-color: #ccc;
+  transition: .4s;
+  border-radius: 34px;
+}
+
+.slider:before {
+  position: absolute;
+  content: "";
+  height: 16px;
+  width: 16px;
+  left: 3px;
+  bottom: 3px;
+  background-color: white;
+  transition: .4s;
+  border-radius: 50%;
+}
+
+input:checked+.slider {
+  background-color: var(--color-blue-accent);
+}
+
+input:focus+.slider {
+  box-shadow: 0 0 1px var(--color-blue-accent);
+}
+
+input:checked+.slider:before {
+  transform: translateX(22px);
+}
+
+/* ==========================================================================
+   INSIGHTS SIDEBAR & COLUMN GRID LAYOUTS
+   ========================================================================== */
+.dashboard-layout-grid {
+  display: grid;
+  grid-template-columns: 4fr 1.2fr;
+  gap: 1.5rem;
+  width: 100%;
+}
+
+.dashboard-main-area {
+  flex: 4;
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  min-width: 0;
+}
+
+.dashboard-insights-sidebar {
+  flex: 1.2;
+  background-color: var(--color-bg-card);
+  border: 1px solid var(--color-blue-border);
+  border-radius: var(--radius-lg);
+  padding: 1.5rem;
+  box-shadow: var(--shadow-sm);
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+  height: fit-content;
+  border-left: 4px solid var(--color-blue-accent);
+}
+
+.insights-header h3 {
+  font-size: 1rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--color-blue-primary);
+}
+
+.insights-list {
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+}
+
+.insight-item {
+  display: flex;
+  gap: 1rem;
+  align-items: flex-start;
+}
+
+.insight-badge {
+  background-color: var(--color-blue-light);
+  color: var(--color-blue-accent);
+  border: 1px solid var(--color-blue-border);
+  width: 2rem;
+  height: 2rem;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 700;
+  font-size: 0.875rem;
+  flex-shrink: 0;
+}
+
+.insight-text h4 {
+  font-size: 0.875rem;
+  font-weight: 600;
+  color: var(--color-text-title);
+  margin-bottom: 0.25rem;
+}
+
+.insight-text p {
+  font-size: 0.781rem;
+  color: var(--color-text-muted);
+  line-height: 1.4;
+}
+
+@media (max-width: 1200px) {
+  .dashboard-layout-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .dashboard-insights-sidebar {
+    width: 100%;
+  }
 }

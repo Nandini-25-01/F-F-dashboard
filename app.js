@@ -7,11 +7,11 @@ const state = {
     activeTab: 'ff', // 'ff' or 'attrition'
     filters: {
         employeeTypes: ['Onroll', 'Consultant', 'Intern'],
-        hrbpLead: 'All',
-        plName: 'All',
-        month: 'All',
+        hrbpLead: ['All'],
+        plName: ['All'],
+        month: [new Date().toLocaleString('default', { month: 'long' })],
         gender: 'All',
-        year: 'All',
+        year: [new Date().getFullYear().toString()],
         momMonth: 'All',
         momYear: 'All'
     },
@@ -34,7 +34,19 @@ const state = {
         recovery: { page: 1, size: 100 }
     },
     activeHeadcount: {},
-    activeSubTab: 'Voluntary' // 'Voluntary' or 'Involuntary'
+    activeSubTab: 'Voluntary', // 'Voluntary' or 'Involuntary'
+    activeReasonsTab: 'voluntary',
+    activeEmpExitsTab: 'combined',
+    googleSheets: {
+        enabled: false,
+        method: 'published', // 'published' or 'api'
+        apiKey: '',
+        spreadsheetId: '',
+        range: 'Sheet1',
+        publishedUrl: '',
+        refreshInterval: 1, // in minutes
+        lastRefreshed: null
+    }
 };
 
 // Global chart references for resetting on reload
@@ -48,7 +60,9 @@ const charts = {
     attritionPl: null,
     attritionType: null,
     attritionVoluntary: null,
-    attritionTenure: null
+    attritionTenure: null,
+    attritionRegion: null,
+    attritionGender: null
 };
 
 // Seed names for deterministic de-anonymization
@@ -149,24 +163,58 @@ const plMap = {
 // ==========================================================================
 document.addEventListener('DOMContentLoaded', () => {
     setupEventListeners();
+    setupModalTabs();
+    loadGoogleSheetsConfig();
     loadData();
+    setupGoogleSheetsAutoRefresh();
 });
 
 // Load data from localStorage or fetch Excel
 async function loadData() {
+    loadGoogleSheetsConfig();
+
+    if (state.googleSheets.enabled) {
+        updateSyncStatus('Syncing Google Sheet...');
+        const success = await syncGoogleSheetsData();
+        if (success) {
+            removeStartupOverlay();
+            return;
+        } else {
+            console.warn('Google Sheets sync failed at startup, falling back to local storage/demo...');
+        }
+    }
+
     const localFF = localStorage.getItem('dash_ff_data');
     const localAttr = localStorage.getItem('dash_attrition_data');
     const localHeadcount = localStorage.getItem('dash_active_headcount');
     const localStatus = localStorage.getItem('dash_sync_status');
 
     if (localFF && localAttr && localHeadcount) {
-        state.ffData = JSON.parse(localFF);
-        state.attritionData = JSON.parse(localAttr);
-        state.activeHeadcount = JSON.parse(localHeadcount);
-        updateSyncStatus(localStatus || 'Loaded from local storage');
-        populateDropdownFilters();
-        updateUI();
-        removeStartupOverlay();
+        try {
+            state.ffData = JSON.parse(localFF);
+            state.attritionData = JSON.parse(localAttr);
+            state.activeHeadcount = JSON.parse(localHeadcount);
+
+            // Force refresh from Excel if cached data doesn't have the new 'region' field
+            const hasRegion = state.attritionData.length > 0 && state.attritionData[0].hasOwnProperty('region') && state.attritionData[0].region;
+            if (!hasRegion) {
+                console.log("Cached data is outdated (missing region/grade), refreshing from Excel...");
+                localStorage.removeItem('dash_ff_data');
+                localStorage.removeItem('dash_attrition_data');
+                localStorage.removeItem('dash_active_headcount');
+                await fetchExcelData();
+                return;
+            }
+
+            updateSyncStatus(localStatus || 'Loaded from local storage');
+            populateDropdownFilters();
+            updateUI();
+            removeStartupOverlay();
+        } catch (e) {
+            console.error("Error loading cached data, clearing...", e);
+            localStorage.clear();
+            await fetchExcelData();
+        }
     } else {
         await fetchExcelData();
     }
@@ -176,12 +224,12 @@ async function loadData() {
 async function fetchExcelData() {
     updateSyncStatus('Fetching spreadsheet...');
     try {
-        const response = await fetch('Sample data for dashborad.xlsx');
+        const response = await fetch('Dashboard data.xlsx');
         if (!response.ok) {
             throw new Error(`Fetch failed: ${response.statusText} (${response.status})`);
         }
         const arrayBuffer = await response.arrayBuffer();
-        processExcelBuffer(arrayBuffer, 'Sample data for dashborad.xlsx');
+        processExcelBuffer(arrayBuffer, 'Dashboard data.xlsx');
     } catch (err) {
         console.error('Error fetching Excel file on startup:', err);
         showStartupOverlay(err.message);
@@ -204,6 +252,7 @@ function processExcelBuffer(arrayBuffer, filename) {
 
         normalizeExcelRows(rows);
         saveState();
+        setDefaultFiltersToLatest();
         populateDropdownFilters();
         updateUI();
         removeStartupOverlay();
@@ -225,6 +274,20 @@ function excelDateToDate(val) {
     }
     const parsed = new Date(val);
     return isNaN(parsed.getTime()) ? null : parsed;
+}
+
+function normalizeGrade(g) {
+    if (!g) return 'Grade 1';
+    const clean = String(g).trim().toUpperCase();
+    if (clean.startsWith('1') || clean === '1') return 'Grade 1';
+    if (clean.startsWith('2') || clean === '2') return 'Grade 2';
+    if (clean.startsWith('3') || clean === '3') return 'Grade 3';
+    if (clean.startsWith('4') || clean === '4') return 'Grade 4';
+    if (clean.startsWith('5') || clean === '5') return 'Grade 5';
+    if (clean.startsWith('6') || clean.startsWith('7') || clean.startsWith('8')) return 'Grade 6+';
+    if (clean.includes('CONSULTANT')) return 'Consultant';
+    if (clean.includes('INTERN')) return 'Intern';
+    return g; // fallback
 }
 
 function formatDateString(date) {
@@ -256,7 +319,7 @@ function normalizeExcelRows(rows) {
         if (!empCode || empCode === 'nan' || empCode === '') return; // Skip empty rows
 
         const name = generateName(empCode);
-        const gender = generateGender(empCode);
+        const gender = String(row['Gender'] || '').trim() || generateGender(empCode);
 
         // Map employee type
         let empType = String(row['Emp Type'] || 'On-Roll').trim();
@@ -274,8 +337,8 @@ function normalizeExcelRows(rows) {
 
         // HRBP Lead
         let hrbpLead = String(row['HRBP Lead'] || 'Unassigned').trim();
-        if (hrbpLead === 'nan' || hrbpLead === 'Unassigned') {
-            hrbpLead = String(row['HRBP Name'] || 'Unassigned').trim();
+        if (hrbpLead === 'nan' || hrbpLead === '') {
+            hrbpLead = 'Unassigned';
         }
         hrbpLead = hrbpLead.replace('Tanu Shrivastava', 'Tanu Srivastava')
             .replace('Jahanvi Mahlotra', 'Janhavi Malhotra')
@@ -295,7 +358,7 @@ function normalizeExcelRows(rows) {
         const closureDate = excelDateToDate(row['Final F&F \nClosure Date'] || row['Final F&F Closure Date']);
         const paymentDate = excelDateToDate(row['F&F Payment Date']);
 
-        const monthName = dol ? dol.toLocaleString('default', { month: 'long' }) : 'June';
+        const monthName = dol ? dol.toLocaleString('default', { month: 'long' }) : '';
 
         // Parse Column AA: F&F Amount (Payable / Recovery)
         let rawAA = row['F&F Amount\n(Payable / Recovery)'] || row['F&F Amount\r\n(Payable / Recovery)'] || 0;
@@ -347,18 +410,31 @@ function normalizeExcelRows(rows) {
             exitType = 'Involuntary';
         }
 
-        // Attrition reason
-        let reason = 'Better Opportunity';
-        if (exitType === 'Involuntary') {
-            const reasons = ['Performance', 'Restructuring', 'Policy Violation'];
-            reason = reasons[getHashValue(empCode + "_invol_reason", reasons.length)];
-        } else {
-            const reasons = ['Better Opportunity', 'Career Growth', 'Personal Reasons', 'Higher Studies', 'Compensation', 'Contract Completion'];
-            reason = reasons[getHashValue(empCode + "_vol_reason", reasons.length)];
+        // Parse Separation Reason
+        let reason = String(row['Separation Reason'] || '').trim();
+        if (!reason || reason.toLowerCase() === 'nan') {
+            if (exitType === 'Involuntary') {
+                const reasons = ['Performance', 'Restructuring', 'Policy Violation'];
+                reason = reasons[getHashValue(empCode + "_invol_reason", reasons.length)];
+            } else {
+                const reasons = ['Better Opportunity', 'Career Growth', 'Personal Reasons', 'Higher Studies', 'Compensation', 'Contract Completion'];
+                reason = reasons[getHashValue(empCode + "_vol_reason", reasons.length)];
+            }
         }
 
         const isRegrettable = (empType === 'Onroll') && (tenureMonths > 12) && (exitType === 'Voluntary');
         const isDropout = tenureMonths < 3; // less than 90 days tenure
+
+        // Parse Region and Grade
+        const rawRegion = String(row['Region'] || row['Zone'] || '').trim();
+        const region = rawRegion || ['North', 'South', 'East', 'West'][getHashValue(empCode + "_region", 4)];
+
+        const rawGrade = String(row['Grade'] || '').trim();
+        let grade = rawGrade;
+        if (!grade || grade.toLowerCase() === 'nan') {
+            grade = ['Grade 1', 'Grade 2', 'Grade 3', 'Grade 4', 'Grade 5'][getHashValue(empCode + "_grade", 5)];
+        }
+        grade = normalizeGrade(grade);
 
         ffArr.push({
             employeeId: empCode,
@@ -368,7 +444,7 @@ function normalizeExcelRows(rows) {
             hrbpLead: hrbpLead,
             plName: plName,
             month: monthName,
-            lastWorkingDay: formatDateString(dol || dor || doj),
+            lastWorkingDay: dol ? formatDateString(dol) : '',
             clearanceStatus: clearanceStatus,
             settlementAmount: finalAmountAE,
             ffAmountAA: ffAmountAA,
@@ -389,7 +465,9 @@ function normalizeExcelRows(rows) {
                 finance: financeClearance ? 'Cleared' : 'Pending',
                 hr: hrbpClearance ? 'Cleared' : 'Pending',
                 admin: adminClearance ? 'Cleared' : 'Pending'
-            }
+            },
+            region: region,
+            grade: grade
         });
 
         attritionArr.push({
@@ -400,12 +478,14 @@ function normalizeExcelRows(rows) {
             hrbpLead: hrbpLead,
             plName: plName,
             month: monthName,
-            exitDate: formatDateString(dol || dor || doj),
+            exitDate: dol ? formatDateString(dol) : '',
             exitType: exitType,
             reasonForLeaving: reason,
             tenureMonths: tenureMonths,
             isRegrettable: isRegrettable,
-            isDropout: isDropout
+            isDropout: isDropout,
+            region: region,
+            grade: grade
         });
     });
 
@@ -469,13 +549,13 @@ function showStartupOverlay(errorMessage) {
             </svg>
             <h2 class="startup-overlay-title">Excel Integration Required</h2>
             <p class="startup-overlay-desc">
-                The browser blocked loading <code>Sample data for dashborad.xlsx</code> automatically (due to CORS policy on local files). Please drag & drop or select the file from your local disk to start.
+                The browser blocked loading <code>Dashboard data.xlsx</code> automatically (due to CORS policy on local files). Please drag & drop or select the file from your local disk to start.
             </p>
             <div id="startup-drop-zone" class="startup-drop-zone">
                 <svg width="24" height="24" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
                 </svg>
-                <span class="startup-drop-zone-text">Drag and drop 'Sample data for dashborad.xlsx' here</span>
+                <span class="startup-drop-zone-text">Drag and drop 'Dashboard data.xlsx' here</span>
                 <span class="startup-drop-zone-subtext">or click to browse local files</span>
                 <input type="file" id="startup-file-input" accept=".xlsx" style="display:none">
             </div>
@@ -539,17 +619,47 @@ function setupEventListeners() {
     tabAttrition.addEventListener('click', () => switchTab('attrition'));
 
     // Custom Employee Type Dropdown
-    const dropdownTrigger = document.getElementById('btn-filter-type');
-    const customDropdown = document.getElementById('dropdown-employee-type');
+    // Setup custom dropdowns open/close toggles
+    const dropdowns = [
+        { id: 'dropdown-employee-type', btnId: 'btn-filter-type' },
+        { id: 'dropdown-hrbp-lead', btnId: 'btn-filter-hrbp' },
+        { id: 'dropdown-pl-name', btnId: 'btn-filter-pl' },
+        { id: 'dropdown-month', btnId: 'btn-filter-month' },
+        { id: 'dropdown-year', btnId: 'btn-filter-year' }
+    ];
 
-    dropdownTrigger.addEventListener('click', (e) => {
-        e.stopPropagation();
-        customDropdown.classList.toggle('open');
+    dropdowns.forEach(dd => {
+        const wrapper = document.getElementById(dd.id);
+        const trigger = document.getElementById(dd.btnId);
+        if (!wrapper || !trigger) return;
+
+        trigger.addEventListener('click', (e) => {
+            e.stopPropagation();
+            // Close all other dropdowns
+            dropdowns.forEach(other => {
+                if (other.id !== dd.id) {
+                    const el = document.getElementById(other.id);
+                    if (el) el.classList.remove('open');
+                }
+            });
+            wrapper.classList.toggle('open');
+        });
+
+        const content = wrapper.querySelector('.dropdown-content');
+        if (content) {
+            content.addEventListener('click', (e) => e.stopPropagation());
+        }
     });
 
-    document.addEventListener('click', () => customDropdown.classList.remove('open'));
-    customDropdown.querySelector('.dropdown-content').addEventListener('click', (e) => e.stopPropagation());
+    document.addEventListener('click', () => {
+        dropdowns.forEach(dd => {
+            const el = document.getElementById(dd.id);
+            if (el) el.classList.remove('open');
+        });
+    });
 
+    // Employee Type checkboxes change handler
+    const customDropdown = document.getElementById('dropdown-employee-type');
     const checkboxes = customDropdown.querySelectorAll('input[type="checkbox"]');
     checkboxes.forEach(cb => {
         cb.addEventListener('change', () => {
@@ -565,43 +675,15 @@ function setupEventListeners() {
         });
     });
 
-    // Dropdown Filters
-    document.getElementById('select-hrbp-lead').addEventListener('change', (e) => {
-        state.filters.hrbpLead = e.target.value;
-        checkFilterState();
-        resetPagination();
-        updateUI();
-    });
+    // HRBP Lead filter change listener is now handled by checkbox change events
 
-    document.getElementById('select-pl-name').addEventListener('change', (e) => {
-        state.filters.plName = e.target.value;
-        checkFilterState();
-        resetPagination();
-        updateUI();
-    });
-
-    document.getElementById('select-month').addEventListener('change', (e) => {
-        state.filters.month = e.target.value;
-        checkFilterState();
-        resetPagination();
-        updateUI();
-    });
-
+    // Gender change handler
     document.getElementById('select-gender').addEventListener('change', (e) => {
         state.filters.gender = e.target.value;
         checkFilterState();
         resetPagination();
         updateUI();
     });
-
-    document.getElementById('select-year').addEventListener('change', (e) => {
-        state.filters.year = e.target.value;
-        checkFilterState();
-        resetPagination();
-        updateUI();
-    });
-
-
 
     // MoM Month & Year Filter listeners
     const selectMoMMonthEl = document.getElementById('select-mom-month');
@@ -625,22 +707,21 @@ function setupEventListeners() {
     const btnReset = document.getElementById('btn-reset-filters');
     btnReset.addEventListener('click', () => {
         state.filters.employeeTypes = ['Onroll', 'Consultant', 'Intern'];
-        state.filters.hrbpLead = 'All';
-        state.filters.plName = 'All';
-        state.filters.month = 'All';
+        state.filters.hrbpLead = ['All'];
+        state.filters.plName = ['All'];
+        state.filters.month = ['All'];
         state.filters.gender = 'All';
-        state.filters.year = 'All';
+        state.filters.year = ['All'];
         state.filters.momMonth = 'All';
         state.filters.momYear = 'All';
 
         checkboxes.forEach(c => c.checked = true);
         updateEmployeeTypeTriggerLabel();
 
-        document.getElementById('select-hrbp-lead').value = 'All';
-        document.getElementById('select-pl-name').value = 'All';
-        document.getElementById('select-month').value = 'All';
+        // Repopulate dynamically
+        populateDropdownFilters();
+
         document.getElementById('select-gender').value = 'All';
-        document.getElementById('select-year').value = 'All';
         if (selectMoMMonthEl) selectMoMMonthEl.value = 'All';
         if (selectMoMYearEl) selectMoMYearEl.value = 'All';
 
@@ -650,11 +731,14 @@ function setupEventListeners() {
     });
 
     // Table Searches
-    document.getElementById('search-mom-table').addEventListener('input', (e) => {
-        state.search.mom = e.target.value.toLowerCase().trim();
-        state.pagination.mom.page = 1;
-        renderMoMDepartmentTable();
-    });
+    const searchMomEl = document.getElementById('search-mom-table');
+    if (searchMomEl) {
+        searchMomEl.addEventListener('input', (e) => {
+            state.search.mom = e.target.value.toLowerCase().trim();
+            state.pagination.mom.page = 1;
+            renderMoMDepartmentTable();
+        });
+    }
 
     // Table Header Sorts
     const sortHeaders = document.querySelectorAll('th.sortable');
@@ -706,6 +790,44 @@ function setupEventListeners() {
     // Top exit reasons P&L dropdown change listener
     document.getElementById('reasons-pl-select').addEventListener('change', (e) => {
         renderTopExitReasonsList(e.target.value);
+    });
+
+    // Exit reasons tab listeners
+    const reasonsTabBtns = document.querySelectorAll('.reasons-tab-btn');
+    reasonsTabBtns.forEach(btn => {
+        btn.addEventListener('click', () => {
+            reasonsTabBtns.forEach(b => {
+                b.classList.remove('active');
+                b.style.background = 'transparent';
+                b.style.color = 'var(--color-text-muted)';
+                b.style.fontWeight = '500';
+            });
+            btn.classList.add('active');
+            btn.style.background = 'var(--color-blue-light)';
+            btn.style.color = 'var(--color-blue-accent)';
+            btn.style.fontWeight = '600';
+            state.activeReasonsTab = btn.getAttribute('data-tab');
+            renderTopExitReasonsList(document.getElementById('reasons-pl-select').value);
+        });
+    });
+
+    // Employee Exits tab listeners (Combined, Voluntary Only, Involuntary Only)
+    const empExitsTabBtns = document.querySelectorAll('.emp-exits-tab-btn');
+    empExitsTabBtns.forEach(btn => {
+        btn.addEventListener('click', () => {
+            empExitsTabBtns.forEach(b => {
+                b.classList.remove('active');
+                b.style.background = 'transparent';
+                b.style.color = 'var(--color-text-muted)';
+                b.style.fontWeight = '500';
+            });
+            btn.classList.add('active');
+            btn.style.background = 'var(--color-blue-light)';
+            btn.style.color = 'var(--color-blue-accent)';
+            btn.style.fontWeight = '600';
+            state.activeEmpExitsTab = btn.getAttribute('data-type');
+            renderEmployeeTypeMonthlyTable();
+        });
     });
 
     // Recovery Table search listener
@@ -766,6 +888,21 @@ function setupEventListeners() {
         await fetchExcelData();
         showToast('Reset back to direct Excel source data!', 'success');
         hideModal();
+    });
+
+    // Populate Google Sheets UI when opening Sync Modal
+    btnSync.addEventListener('click', () => {
+        populateSheetsConfigUI();
+    });
+
+    // Google Sheets Method Toggle listener
+    document.getElementById('sheet-sync-method').addEventListener('change', (e) => {
+        toggleSheetMethodFields(e.target.value);
+    });
+
+    // Save & Sync Config button listener
+    document.getElementById('btn-save-sheets-config').addEventListener('click', () => {
+        saveAndSyncSheetsConfig();
     });
 }
 
@@ -886,89 +1023,457 @@ function getFilteredFF() {
     return state.ffData.filter(item => {
         if (item.clearanceStatus === 'Admin Hold' || item.clearanceStatus === 'Disputed') return false;
         const typeMatch = state.filters.employeeTypes.includes(item.employeeType);
-        const hrbpMatch = state.filters.hrbpLead === 'All' || item.hrbpLead === state.filters.hrbpLead;
-        const plMatch = state.filters.plName === 'All' || item.plName === state.filters.plName;
-        const monthMatch = state.filters.month === 'All' || item.month === state.filters.month;
+        const hrbpMatch = state.filters.hrbpLead.includes('All') || state.filters.hrbpLead.includes(item.hrbpLead);
+        const plMatch = state.filters.plName.includes('All') || state.filters.plName.includes(item.plName);
+        const monthMatch = state.filters.month.includes('All') || state.filters.month.includes(item.month);
         const genderMatch = state.filters.gender === 'All' || item.gender === state.filters.gender;
-        return typeMatch && hrbpMatch && plMatch && monthMatch && genderMatch;
+        const yearMatch = state.filters.year.includes('All') || (item.lastWorkingDay && state.filters.year.some(y => item.lastWorkingDay.startsWith(y)));
+        return typeMatch && hrbpMatch && plMatch && monthMatch && genderMatch && yearMatch;
+    });
+}
+
+function getFilteredFFIgnoringMonth() {
+    return state.ffData.filter(item => {
+        if (item.clearanceStatus === 'Admin Hold' || item.clearanceStatus === 'Disputed') return false;
+        const typeMatch = state.filters.employeeTypes.includes(item.employeeType);
+        const hrbpMatch = state.filters.hrbpLead.includes('All') || state.filters.hrbpLead.includes(item.hrbpLead);
+        const plMatch = state.filters.plName.includes('All') || state.filters.plName.includes(item.plName);
+        const genderMatch = state.filters.gender === 'All' || item.gender === state.filters.gender;
+        const yearMatch = state.filters.year.includes('All') || (item.lastWorkingDay && state.filters.year.some(y => item.lastWorkingDay.startsWith(y)));
+        return typeMatch && hrbpMatch && plMatch && genderMatch && yearMatch;
     });
 }
 
 function getFilteredAttrition() {
     return state.attritionData.filter(item => {
         const typeMatch = state.filters.employeeTypes.includes(item.employeeType);
-        const hrbpMatch = state.filters.hrbpLead === 'All' || item.hrbpLead === state.filters.hrbpLead;
-        const plMatch = state.filters.plName === 'All' || item.plName === state.filters.plName;
-        const monthMatch = state.filters.month === 'All' || item.month === state.filters.month;
+        const hrbpMatch = state.filters.hrbpLead.includes('All') || state.filters.hrbpLead.includes(item.hrbpLead);
+        const plMatch = state.filters.plName.includes('All') || state.filters.plName.includes(item.plName);
+        const monthMatch = state.filters.month.includes('All') || state.filters.month.includes(item.month);
         const genderMatch = state.filters.gender === 'All' || item.gender === state.filters.gender;
-        const yearMatch = state.filters.year === 'All' || (item.exitDate && item.exitDate.startsWith(state.filters.year));
+        const yearMatch = state.filters.year.includes('All') || (item.exitDate && state.filters.year.some(y => item.exitDate.startsWith(y)));
         return typeMatch && hrbpMatch && plMatch && monthMatch && genderMatch && yearMatch;
+    });
+}
+
+function getFilteredAttritionIgnoringMonth() {
+    return state.attritionData.filter(item => {
+        const typeMatch = state.filters.employeeTypes.includes(item.employeeType);
+        const hrbpMatch = state.filters.hrbpLead.includes('All') || state.filters.hrbpLead.includes(item.hrbpLead);
+        const plMatch = state.filters.plName.includes('All') || state.filters.plName.includes(item.plName);
+        const genderMatch = state.filters.gender === 'All' || item.gender === state.filters.gender;
+        const yearMatch = state.filters.year.includes('All') || (item.exitDate && state.filters.year.some(y => item.exitDate.startsWith(y)));
+        return typeMatch && hrbpMatch && plMatch && genderMatch && yearMatch;
     });
 }
 
 // ==========================================================================
 // FILTER DROPDOWNS POPULATION
 // ==========================================================================
+// Helper to default filters to the latest year and month present in the dataset
+function setDefaultFiltersToLatest() {
+    const years = new Set();
+    state.ffData.forEach(item => {
+        if (item.lastWorkingDay) {
+            const yr = item.lastWorkingDay.substring(0, 4);
+            if (yr && /^\d{4}$/.test(yr)) years.add(yr);
+        }
+    });
+    state.attritionData.forEach(item => {
+        if (item.exitDate) {
+            const yr = item.exitDate.substring(0, 4);
+            if (yr && /^\d{4}$/.test(yr)) years.add(yr);
+        }
+    });
+
+    if (years.size === 0) return;
+
+    // Find latest year
+    const sortedYears = Array.from(years).sort();
+    const latestYear = sortedYears[sortedYears.length - 1];
+
+    // Find latest month in that year
+    const monthOrder = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+    const monthsInLatestYear = new Set();
+
+    state.ffData.forEach(item => {
+        if (item.lastWorkingDay && item.lastWorkingDay.startsWith(latestYear) && item.month) {
+            monthsInLatestYear.add(item.month);
+        }
+    });
+    state.attritionData.forEach(item => {
+        if (item.exitDate && item.exitDate.startsWith(latestYear) && item.month) {
+            monthsInLatestYear.add(item.month);
+        }
+    });
+
+    let latestMonth = 'All';
+    if (monthsInLatestYear.size > 0) {
+        const sortedMonths = Array.from(monthsInLatestYear).sort((a, b) => monthOrder.indexOf(a) - monthOrder.indexOf(b));
+        latestMonth = sortedMonths[sortedMonths.length - 1];
+    }
+
+    state.filters.year = [latestYear];
+    state.filters.month = [latestMonth];
+}
+
 function populateDropdownFilters() {
-    const selectHRBP = document.getElementById('select-hrbp-lead');
-    const selectPL = document.getElementById('select-pl-name');
-    const selectMonth = document.getElementById('select-month');
+    // HRBP Leads select dropdown is replaced by checkbox custom dropdown
+
     const selectMoMMonth = document.getElementById('select-mom-month');
     const selectMoMYear = document.getElementById('select-mom-year');
 
-    const prevHRBP = selectHRBP.value;
-    const prevPL = selectPL.value;
-    const prevMonth = selectMonth.value;
     const prevMoMMonth = selectMoMMonth ? selectMoMMonth.value : 'All';
     const prevMoMYear = selectMoMYear ? selectMoMYear.value : 'All';
 
     const leads = new Set();
     const pls = new Set();
     const months = new Set();
+    const years = new Set();
 
     state.ffData.forEach(item => {
         if (item.hrbpLead) leads.add(item.hrbpLead);
         if (item.plName) pls.add(item.plName);
         if (item.month) months.add(item.month);
+        if (item.lastWorkingDay) {
+            const yr = item.lastWorkingDay.substring(0, 4);
+            if (yr && /^\d{4}$/.test(yr)) years.add(yr);
+        }
     });
 
     state.attritionData.forEach(item => {
         if (item.hrbpLead) leads.add(item.hrbpLead);
         if (item.plName) pls.add(item.plName);
         if (item.month) months.add(item.month);
+        if (item.exitDate) {
+            const yr = item.exitDate.substring(0, 4);
+            if (yr && /^\d{4}$/.test(yr)) years.add(yr);
+        }
     });
 
-    selectHRBP.innerHTML = '<option value="All">All Leads</option>';
-    Array.from(leads).sort().forEach(lead => {
-        selectHRBP.innerHTML += `<option value="${lead}">${lead}</option>`;
-    });
-
-    selectPL.innerHTML = '<option value="All">All Departments</option>';
-    Array.from(pls).sort().forEach(pl => {
-        selectPL.innerHTML += `<option value="${pl}">${pl}</option>`;
-    });
-
-    const monthOrder = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
-    const sortedMonths = Array.from(months).sort((a, b) => monthOrder.indexOf(a) - monthOrder.indexOf(b));
-
-    selectMonth.innerHTML = '<option value="All">All Months</option>';
-    sortedMonths.forEach(m => {
-        selectMonth.innerHTML += `<option value="${m}">${m}</option>`;
-    });
-
-    if (selectMoMMonth) {
-        selectMoMMonth.innerHTML = '<option value="All">All Months</option>';
-        sortedMonths.forEach(m => {
-            selectMoMMonth.innerHTML += `<option value="${m}">${m}</option>`;
-        });
+    if (years.size === 0) {
+        years.add('2025');
+        years.add('2026');
     }
 
-    // Restore previous inputs if valid
-    if (Array.from(leads).includes(prevHRBP)) selectHRBP.value = prevHRBP;
-    if (Array.from(pls).includes(prevPL)) selectPL.value = prevPL;
-    if (sortedMonths.includes(prevMonth)) selectMonth.value = prevMonth;
-    if (selectMoMMonth && sortedMonths.includes(prevMoMMonth)) selectMoMMonth.value = prevMoMMonth;
-    if (selectMoMYear) selectMoMYear.value = prevMoMYear;
+    // --- Dynamic Checkbox lists ---
+
+    // 0. HRBP Lead dropdown
+    const hrbpContent = document.getElementById('dropdown-hrbp-content');
+    if (hrbpContent) {
+        hrbpContent.innerHTML = '';
+        const allChecked = state.filters.hrbpLead.includes('All') ? 'checked' : '';
+        hrbpContent.innerHTML += `
+            <label class="dropdown-option">
+                <input type="checkbox" id="chk-hrbp-all" value="All" ${allChecked}> <em>All Leads</em>
+            </label>
+        `;
+
+        // Only include actual hrbp leads (filtering out Unassigned if not needed, but keep sorted unique leads)
+        const sortedLeads = Array.from(leads).filter(l => l !== 'Unassigned').sort();
+
+        sortedLeads.forEach(lead => {
+            const checked = (state.filters.hrbpLead.includes('All') || state.filters.hrbpLead.includes(lead)) ? 'checked' : '';
+            hrbpContent.innerHTML += `
+                <label class="dropdown-option">
+                    <input type="checkbox" name="chk-hrbp" value="${lead}" ${checked}> ${lead}
+                </label>
+            `;
+        });
+
+        const allCb = document.getElementById('chk-hrbp-all');
+        const itemCbs = hrbpContent.querySelectorAll('input[name="chk-hrbp"]');
+
+        allCb.addEventListener('change', () => {
+            if (allCb.checked) {
+                itemCbs.forEach(cb => cb.checked = true);
+                state.filters.hrbpLead = ['All'];
+            } else {
+                itemCbs.forEach(cb => cb.checked = false);
+                state.filters.hrbpLead = [];
+            }
+            updateHRBPTriggerLabel();
+            checkFilterState();
+            resetPagination();
+            updateUI();
+        });
+
+        itemCbs.forEach(cb => {
+            cb.addEventListener('change', () => {
+                if (!cb.checked) {
+                    allCb.checked = false;
+                }
+                const active = [];
+                itemCbs.forEach(c => {
+                    if (c.checked) active.push(c.value);
+                });
+                if (active.length === itemCbs.length) {
+                    allCb.checked = true;
+                    state.filters.hrbpLead = ['All'];
+                } else {
+                    state.filters.hrbpLead = active;
+                }
+                updateHRBPTriggerLabel();
+                checkFilterState();
+                resetPagination();
+                updateUI();
+            });
+        });
+        updateHRBPTriggerLabel();
+    }
+
+    // 1. P&L Name (Departments)
+    const plContent = document.getElementById('dropdown-pl-content');
+    if (plContent) {
+        plContent.innerHTML = '';
+        const allChecked = state.filters.plName.includes('All') ? 'checked' : '';
+        plContent.innerHTML += `
+            <label class="dropdown-option">
+                <input type="checkbox" id="chk-pl-all" value="All" ${allChecked}> <em>All P&L</em>
+            </label>
+        `;
+        Array.from(pls).sort().forEach(pl => {
+            const checked = (state.filters.plName.includes('All') || state.filters.plName.includes(pl)) ? 'checked' : '';
+            plContent.innerHTML += `
+                <label class="dropdown-option">
+                    <input type="checkbox" name="chk-pl" value="${pl}" ${checked}> ${pl}
+                </label>
+            `;
+        });
+
+        const allCb = document.getElementById('chk-pl-all');
+        const itemCbs = plContent.querySelectorAll('input[name="chk-pl"]');
+
+        allCb.addEventListener('change', () => {
+            if (allCb.checked) {
+                itemCbs.forEach(cb => cb.checked = true);
+                state.filters.plName = ['All'];
+            } else {
+                itemCbs.forEach(cb => cb.checked = false);
+                state.filters.plName = [];
+            }
+            updatePLTriggerLabel();
+            checkFilterState();
+            resetPagination();
+            updateUI();
+        });
+
+        itemCbs.forEach(cb => {
+            cb.addEventListener('change', () => {
+                if (!cb.checked) {
+                    allCb.checked = false;
+                }
+                const active = [];
+                itemCbs.forEach(c => {
+                    if (c.checked) active.push(c.value);
+                });
+                if (active.length === itemCbs.length) {
+                    allCb.checked = true;
+                    state.filters.plName = ['All'];
+                } else {
+                    state.filters.plName = active;
+                }
+                updatePLTriggerLabel();
+                checkFilterState();
+                resetPagination();
+                updateUI();
+            });
+        });
+        updatePLTriggerLabel();
+    }
+
+    // 2. Year dropdown
+    const yearContent = document.getElementById('dropdown-year-content');
+    const sortedYears = Array.from(years).sort();
+    if (yearContent) {
+        yearContent.innerHTML = '';
+        const allChecked = state.filters.year.includes('All') ? 'checked' : '';
+        yearContent.innerHTML += `
+            <label class="dropdown-option">
+                <input type="checkbox" id="chk-year-all" value="All" ${allChecked}> <em>All Years</em>
+            </label>
+        `;
+        sortedYears.forEach(y => {
+            const checked = (state.filters.year.includes('All') || state.filters.year.includes(y)) ? 'checked' : '';
+            yearContent.innerHTML += `
+                <label class="dropdown-option">
+                    <input type="checkbox" name="chk-year" value="${y}" ${checked}> ${y}
+                </label>
+            `;
+        });
+
+        const allCb = document.getElementById('chk-year-all');
+        const itemCbs = yearContent.querySelectorAll('input[name="chk-year"]');
+
+        allCb.addEventListener('change', () => {
+            if (allCb.checked) {
+                itemCbs.forEach(cb => cb.checked = true);
+                state.filters.year = ['All'];
+            } else {
+                itemCbs.forEach(cb => cb.checked = false);
+                state.filters.year = [];
+            }
+            populateDropdownFilters(); // dynamically filters month dropdown list!
+            updateYearTriggerLabel();
+            checkFilterState();
+            resetPagination();
+            updateUI();
+        });
+
+        itemCbs.forEach(cb => {
+            cb.addEventListener('change', () => {
+                if (!cb.checked) {
+                    allCb.checked = false;
+                }
+                const active = [];
+                itemCbs.forEach(c => {
+                    if (c.checked) active.push(c.value);
+                });
+                if (active.length === itemCbs.length) {
+                    allCb.checked = true;
+                    state.filters.year = ['All'];
+                } else {
+                    state.filters.year = active;
+                }
+                populateDropdownFilters(); // dynamically filters month dropdown list!
+                updateYearTriggerLabel();
+                checkFilterState();
+                resetPagination();
+                updateUI();
+            });
+        });
+        updateYearTriggerLabel();
+    }
+
+    // 3. Month dropdown (filtered by selected year)
+    const monthContent = document.getElementById('dropdown-month-content');
+    const monthOrder = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+    if (monthContent) {
+        monthContent.innerHTML = '';
+
+        // Hide months after June if ONLY 2026 is selected
+        const is2026OnlySelected = state.filters.year.length === 1 && state.filters.year.includes(String(new Date().getFullYear()));
+        let displayMonths = Array.from(months);
+        if (is2026OnlySelected) {
+            const maxMonthIdx = new Date().getMonth(); // 5 for June
+            displayMonths = displayMonths.filter(m => {
+                const idx = monthOrder.indexOf(m);
+                return idx !== -1 && idx <= maxMonthIdx;
+            });
+        }
+
+        const sortedMonths = displayMonths.sort((a, b) => monthOrder.indexOf(a) - monthOrder.indexOf(b));
+        const allChecked = state.filters.month.includes('All') ? 'checked' : '';
+        monthContent.innerHTML += `
+            <label class="dropdown-option">
+                <input type="checkbox" id="chk-month-all" value="All" ${allChecked}> <em>All Months</em>
+            </label>
+        `;
+        sortedMonths.forEach(m => {
+            const checked = (state.filters.month.includes('All') || state.filters.month.includes(m)) ? 'checked' : '';
+            monthContent.innerHTML += `
+                <label class="dropdown-option">
+                    <input type="checkbox" name="chk-month" value="${m}" ${checked}> ${m}
+                </label>
+            `;
+        });
+
+        const allCb = document.getElementById('chk-month-all');
+        const itemCbs = monthContent.querySelectorAll('input[name="chk-month"]');
+
+        allCb.addEventListener('change', () => {
+            if (allCb.checked) {
+                itemCbs.forEach(cb => cb.checked = true);
+                state.filters.month = ['All'];
+            } else {
+                itemCbs.forEach(cb => cb.checked = false);
+                state.filters.month = [];
+            }
+            updateMonthTriggerLabel();
+            checkFilterState();
+            resetPagination();
+            updateUI();
+        });
+
+        itemCbs.forEach(cb => {
+            cb.addEventListener('change', () => {
+                if (!cb.checked) {
+                    allCb.checked = false;
+                }
+                const active = [];
+                itemCbs.forEach(c => {
+                    if (c.checked) active.push(c.value);
+                });
+                if (active.length === itemCbs.length) {
+                    allCb.checked = true;
+                    state.filters.month = ['All'];
+                } else {
+                    state.filters.month = active;
+                }
+                updateMonthTriggerLabel();
+                checkFilterState();
+                resetPagination();
+                updateUI();
+            });
+        });
+        updateMonthTriggerLabel();
+    }
+
+    // MoM select options
+    if (selectMoMMonth) {
+        const sortedMonthsAll = Array.from(months).sort((a, b) => monthOrder.indexOf(a) - monthOrder.indexOf(b));
+        selectMoMMonth.innerHTML = '<option value="All">All Months</option>';
+        sortedMonthsAll.forEach(m => {
+            selectMoMMonth.innerHTML += `<option value="${m}">${m}</option>`;
+        });
+        if (sortedMonthsAll.includes(prevMoMMonth)) selectMoMMonth.value = prevMoMMonth;
+    }
+
+    if (selectMoMYear) {
+        selectMoMYear.innerHTML = '<option value="All">All Years</option>';
+        sortedYears.forEach(y => {
+            selectMoMYear.innerHTML += `<option value="${y}">${y}</option>`;
+        });
+        if (sortedYears.includes(prevMoMYear)) selectMoMYear.value = prevMoMYear;
+    }
+}
+
+// Trigger text helpers for multi-select checklists
+function updateMultiselectTriggerLabel(triggerId, selectedList, allCount, defaultLabel) {
+    const trigger = document.getElementById(triggerId);
+    if (!trigger) return;
+    if (selectedList.includes('All') || selectedList.length === allCount) {
+        trigger.textContent = defaultLabel;
+    } else if (selectedList.length === 0) {
+        trigger.textContent = 'None selected';
+    } else {
+        // Show count if list is long, else list names
+        if (selectedList.length > 2) {
+            trigger.textContent = `${selectedList.length} Selected`;
+        } else {
+            trigger.textContent = selectedList.join(', ');
+        }
+    }
+}
+
+function updatePLTriggerLabel() {
+    const count = document.querySelectorAll('input[name="chk-pl"]').length;
+    updateMultiselectTriggerLabel('btn-filter-pl', state.filters.plName, count, 'All P&L');
+}
+
+function updateHRBPTriggerLabel() {
+    const count = document.querySelectorAll('input[name="chk-hrbp"]').length;
+    updateMultiselectTriggerLabel('btn-filter-hrbp', state.filters.hrbpLead, count, 'All Leads');
+}
+
+function updateMonthTriggerLabel() {
+    const count = document.querySelectorAll('input[name="chk-month"]').length;
+    updateMultiselectTriggerLabel('btn-filter-month', state.filters.month, count, 'All Months');
+}
+
+function updateYearTriggerLabel() {
+    const count = document.querySelectorAll('input[name="chk-year"]').length;
+    updateMultiselectTriggerLabel('btn-filter-year', state.filters.year, count, 'All Years');
 }
 
 // ==========================================================================
@@ -980,7 +1485,9 @@ function updateUI() {
 
     renderFFPayoutPLTable();
     renderAttritionTypeTable();
-    renderMoMDepartmentTable();
+    renderMonthlyAttritionRateTable();
+    renderEmployeeTypeMonthlyTable();
+    renderDemographicsBreakdown();
     renderFFRecoveryAnalysisTable();
 
     // Populate reasons P&L select options and update list
@@ -997,10 +1504,9 @@ function updateUI() {
 // ==========================================================================
 function calculateFFMetrics() {
     const data = getFilteredFF();
-    const total = data.filter(d => d.clearanceStatus !== 'Admin Hold' && d.clearanceStatus !== 'Disputed').length;
+    const total = data.length;
     const pending = data.filter(d => d.clearanceStatus === 'In Progress').length;
     const settled = data.filter(d => d.clearanceStatus === 'Settled').length;
-    const rate = total > 0 ? Math.round((settled / total) * 100) : 0;
 
     // Filtered Payable vs Recovery sums
     const payablePayout = data
@@ -1011,9 +1517,18 @@ function calculateFFMetrics() {
         .reduce((sum, item) => sum + (item.settlementAmount || 0), 0);
 
     // Bind to cards
-    document.getElementById('kpi-ff-total').textContent = total.toLocaleString();
-    document.getElementById('kpi-ff-pending').textContent = pending.toLocaleString();
-    document.getElementById('kpi-ff-rate').textContent = `${rate}%`;
+    const elFfTotal = document.getElementById('kpi-ff-total');
+    if (elFfTotal) elFfTotal.textContent = total.toLocaleString();
+
+    const elSummaryTotal = document.getElementById('lbl-summary-total');
+    if (elSummaryTotal) elSummaryTotal.textContent = total.toLocaleString();
+
+    const elSummarySettled = document.getElementById('lbl-summary-settled');
+    if (elSummarySettled) elSummarySettled.textContent = settled.toLocaleString();
+
+    const elSummaryPending = document.getElementById('lbl-summary-pending');
+    if (elSummaryPending) elSummaryPending.textContent = pending.toLocaleString();
+
     const payoutEl = document.getElementById('kpi-ff-payout');
     if (payoutEl) {
         payoutEl.innerHTML = `
@@ -1029,17 +1544,6 @@ function calculateFFMetrics() {
     if (avgTatEl) {
         avgTatEl.textContent = `${avgAgeing.toFixed(1)}d`;
     }
-
-    const badge = document.getElementById('kpi-ff-pending-badge');
-    if (badge) {
-        if (pending > 0) {
-            badge.className = 'kpi-badge warning';
-            badge.textContent = 'Active';
-        } else {
-            badge.className = 'kpi-badge success';
-            badge.textContent = 'Clear';
-        }
-    }
 }
 
 function calculateAttritionMetrics() {
@@ -1048,10 +1552,12 @@ function calculateAttritionMetrics() {
 
     // Headcount Map
     let filteredHeadcount = 0;
-    if (state.filters.plName === 'All') {
+    if (state.filters.plName.includes('All')) {
         filteredHeadcount = Object.values(state.activeHeadcount).reduce((sum, c) => sum + c, 0);
     } else {
-        filteredHeadcount = state.activeHeadcount[state.filters.plName] || 0;
+        state.filters.plName.forEach(pl => {
+            filteredHeadcount += (state.activeHeadcount[pl] || 0);
+        });
     }
 
     const rate = filteredHeadcount > 0 ? ((totalExits / filteredHeadcount) * 100).toFixed(1) : '0.0';
@@ -1083,7 +1589,7 @@ function calculateAttritionMetrics() {
     if (elTenure) elTenure.textContent = `${avgTenure} mo`;
 
     const elDropout = document.getElementById('kpi-attrition-dropout');
-    if (elDropout) elDropout.textContent = `${dropouts.toLocaleString()} (${dropoutRate}%)`;
+    if (elDropout) elDropout.textContent = `${dropouts} (${dropoutRate}%)`;
 }
 
 // ==========================================================================
@@ -1111,11 +1617,11 @@ function setupPaginationControls(key, totalCount, renderFn) {
     const totalPages = Math.max(1, Math.ceil(totalCount / pag.size));
     if (pag.page > totalPages) pag.page = totalPages;
 
-    const tableEl = document.getElementById(`table-${key}-registry`) || 
-                    document.getElementById(`table-attrition-${key}`) || 
-                    document.getElementById(`table-ff-${key}`) ||
-                    document.getElementById(key) ||
-                    document.getElementById(`table-${key}`);
+    const tableEl = document.getElementById(`table-${key}-registry`) ||
+        document.getElementById(`table-attrition-${key}`) ||
+        document.getElementById(`table-ff-${key}`) ||
+        document.getElementById(key) ||
+        document.getElementById(`table-${key}`);
     if (!tableEl) return;
 
     const container = tableEl.closest('.table-section') || tableEl.closest('.compact-table-card');
@@ -1154,73 +1660,273 @@ function setupPaginationControls(key, totalCount, renderFn) {
 
 
 // MoM exits count and % by department table
-function renderMoMDepartmentTable() {
-    let unfiltered = state.attritionData;
+function renderMonthlyAttritionRateTable() {
+    const exits = getFilteredAttritionIgnoringMonth();
 
-    // Filter by MoM Year
-    if (state.filters.momYear && state.filters.momYear !== 'All') {
-        unfiltered = unfiltered.filter(item => item.exitDate && item.exitDate.startsWith(state.filters.momYear));
-    }
-
-    // Group exits by P&L + Month
-    const groups = {};
-    const monthlyTotalExits = {};
-
-    unfiltered.forEach(item => {
-        const key = `${item.plName}|${item.month}`;
-        groups[key] = (groups[key] || 0) + 1;
-        monthlyTotalExits[item.month] = (monthlyTotalExits[item.month] || 0) + 1;
+    // Group exits by YYYY-MM
+    const monthlyExits = {};
+    exits.forEach(e => {
+        if (!e.exitDate) return;
+        const yyyymm = e.exitDate.substring(0, 7); // "YYYY-MM"
+        monthlyExits[yyyymm] = (monthlyExits[yyyymm] || 0) + 1;
     });
 
-    const list = [];
-    Object.keys(groups).forEach(key => {
-        const [plName, month] = key.split('|');
-        const count = groups[key];
-        const monthlyTotal = monthlyTotalExits[month] || 1;
-        const percent = ((count / monthlyTotal) * 100).toFixed(1);
+    // Sort the year-months chronologically
+    const sortedYM = Object.keys(monthlyExits).sort();
 
-        list.push({
-            plName,
-            month,
-            count,
-            percent: parseFloat(percent)
+    // Get current filtered starting headcount (active headcount TODAY)
+    let finalHeadcount = 0;
+    if (state.filters.plName.includes('All')) {
+        finalHeadcount = Object.values(state.activeHeadcount).reduce((sum, c) => sum + c, 0);
+    } else {
+        state.filters.plName.forEach(pl => {
+            finalHeadcount += (state.activeHeadcount[pl] || 0);
         });
-    });
-
-    let filteredList = list;
-    if (state.filters.momMonth && state.filters.momMonth !== 'All') {
-        filteredList = list.filter(item => item.month === state.filters.momMonth);
     }
 
-    // Apply search filter on MoM department table
-    const searched = filteredList.filter(item => {
-        const q = state.search.mom;
-        if (!q) return true;
-        return item.plName.toLowerCase().includes(q) || item.month.toLowerCase().includes(q);
-    });
+    // Reconstruction: calculate starting headcount for each month working backwards
+    const tableRows = [];
+    let currentHeadcount = finalHeadcount;
 
-    const sorted = sortData(searched, state.sort.mom);
-    const pag = state.pagination.mom;
-    const paginated = sorted.slice((pag.page - 1) * pag.size, pag.page * pag.size);
+    for (let i = sortedYM.length - 1; i >= 0; i--) {
+        const ym = sortedYM[i];
+        const exitCount = monthlyExits[ym] || 0;
+        const startHeadcount = currentHeadcount + exitCount;
 
-    const tbody = document.getElementById('tbody-attrition-mom');
+        const [year, monthNum] = ym.split('-');
+        const dateObj = new Date(parseInt(year), parseInt(monthNum) - 1, 1);
+        const monthLabel = dateObj.toLocaleString('default', { month: 'long', year: 'numeric' });
+
+        const rate = startHeadcount > 0 ? ((exitCount / startHeadcount) * 100).toFixed(1) : '0.0';
+
+        tableRows.unshift({
+            monthLabel,
+            startHeadcount,
+            exitCount,
+            rate
+        });
+
+        currentHeadcount = startHeadcount;
+    }
+
+    const tbody = document.getElementById('tbody-attrition-monthly-rate');
+    if (!tbody) return;
     tbody.innerHTML = '';
 
-    paginated.forEach(item => {
-        const row = document.createElement('tr');
-        row.innerHTML = `
-            <td><strong>${item.plName}</strong></td>
-            <td>${item.month}</td>
-            <td class="align-right">${item.count}</td>
-            <td class="align-right">${item.percent}%</td>
+    tableRows.forEach(row => {
+        const tr = document.createElement('tr');
+        tr.innerHTML = `
+            <td><strong>${row.monthLabel}</strong></td>
+            <td class="align-right">${row.startHeadcount.toLocaleString()}</td>
+            <td class="align-right">${row.exitCount.toLocaleString()}</td>
+            <td class="align-right" style="font-weight: 600; color: var(--color-blue-primary);">${row.rate}%</td>
         `;
-        tbody.appendChild(row);
+        tbody.appendChild(tr);
+    });
+}
+
+function renderEmployeeTypeMonthlyTable() {
+    const exits = getFilteredAttritionIgnoringMonth();
+
+    let filteredExits = exits;
+    if (state.activeEmpExitsTab === 'voluntary') {
+        filteredExits = exits.filter(e => e.exitType === 'Voluntary');
+    } else if (state.activeEmpExitsTab === 'involuntary') {
+        filteredExits = exits.filter(e => e.exitType === 'Involuntary');
+    }
+
+    const typeMonthCounts = {
+        'Onroll': {},
+        'Consultant': {},
+        'Intern': {}
+    };
+
+    const allMonthsSet = new Set();
+    filteredExits.forEach(e => {
+        if (!e.exitDate) return;
+        const ym = e.exitDate.substring(0, 7);
+        allMonthsSet.add(ym);
+        const type = e.employeeType;
+        if (typeMonthCounts[type] !== undefined) {
+            typeMonthCounts[type][ym] = (typeMonthCounts[type][ym] || 0) + 1;
+        }
     });
 
-    document.getElementById('lbl-attrition-mom-count').textContent =
-        `Showing ${(pag.page - 1) * pag.size + 1} - ${Math.min(pag.page * pag.size, sorted.length)} of ${sorted.length} records`;
+    const sortedMonths = Array.from(allMonthsSet).sort();
 
-    setupPaginationControls('mom', sorted.length, renderMoMDepartmentTable);
+    const theadRow = document.getElementById('thead-row-emp-type-exits');
+    if (theadRow) {
+        theadRow.innerHTML = '<th>Employee Type</th>';
+        sortedMonths.forEach(ym => {
+            const [year, monthNum] = ym.split('-');
+            const dateObj = new Date(parseInt(year), parseInt(monthNum) - 1, 1);
+            const monthLabel = dateObj.toLocaleString('default', { month: 'short', year: 'numeric' });
+            theadRow.innerHTML += `<th class="align-right">${monthLabel}</th>`;
+        });
+        theadRow.innerHTML += '<th class="align-right">Total</th>';
+    }
+
+    const tbody = document.getElementById('tbody-emp-type-monthly-exits');
+    if (!tbody) return;
+    tbody.innerHTML = '';
+
+    const types = ['Onroll', 'Consultant', 'Intern'];
+    const colTotals = {};
+    sortedMonths.forEach(ym => { colTotals[ym] = 0; });
+    let grandTotal = 0;
+
+    types.forEach(type => {
+        const tr = document.createElement('tr');
+        tr.innerHTML = `<td><strong>${type}</strong></td>`;
+        let rowTotal = 0;
+
+        sortedMonths.forEach(ym => {
+            const count = typeMonthCounts[type][ym] || 0;
+            tr.innerHTML += `<td class="align-right">${count.toLocaleString()}</td>`;
+            rowTotal += count;
+            colTotals[ym] += count;
+        });
+
+        tr.innerHTML += `<td class="align-right" style="font-weight:600;">${rowTotal.toLocaleString()}</td>`;
+        grandTotal += rowTotal;
+        tbody.appendChild(tr);
+    });
+
+    const totalTr = document.createElement('tr');
+    totalTr.style.borderTop = '2px solid var(--color-border)';
+    totalTr.innerHTML = '<td><strong>Total Exits</strong></td>';
+
+    sortedMonths.forEach(ym => {
+        totalTr.innerHTML += `<td class="align-right" style="font-weight:600;">${colTotals[ym].toLocaleString()}</td>`;
+    });
+    totalTr.innerHTML += `<td class="align-right" style="font-weight:700; color:var(--color-blue-primary);">${grandTotal.toLocaleString()}</td>`;
+    tbody.appendChild(totalTr);
+}
+
+function renderDemographicsBreakdown() {
+    const exits = getFilteredAttrition();
+    const totalExits = exits.length;
+
+    // 1. Region doughnut
+    const regionCounts = { 'North': 0, 'South': 0, 'East': 0, 'West': 0 };
+    exits.forEach(e => {
+        const reg = e.region || 'Unassigned';
+        if (regionCounts[reg] !== undefined) {
+            regionCounts[reg]++;
+        } else {
+            regionCounts[reg] = (regionCounts[reg] || 0) + 1;
+        }
+    });
+
+    const regionData = Object.values(regionCounts);
+    const regionLabels = Object.keys(regionCounts).map(k => {
+        const count = regionCounts[k];
+        const pct = totalExits > 0 ? ((count / totalExits) * 100).toFixed(1) : '0.0';
+        return `${k}: ${count} (${pct}%)`;
+    });
+
+    const ctxRegion = document.getElementById('chart-attrition-region').getContext('2d');
+    if (charts.attritionRegion) charts.attritionRegion.destroy();
+    charts.attritionRegion = new Chart(ctxRegion, {
+        type: 'doughnut',
+        data: {
+            labels: regionLabels,
+            datasets: [{
+                data: regionData,
+                backgroundColor: ['#FF6F61', '#1A1A1A', '#AEAEAE', '#4A90E2'],
+                borderWidth: 1.5,
+                borderColor: '#ffffff'
+            }]
+        },
+        options: {
+            ...commonChartOptions,
+            cutout: '70%'
+        }
+    });
+
+    // 2. Gender doughnut
+    const genderCounts = {};
+    exits.forEach(e => {
+        const g = e.gender || 'Unassigned';
+        genderCounts[g] = (genderCounts[g] || 0) + 1;
+    });
+
+    const genderLabels = Object.keys(genderCounts).map(k => {
+        const count = genderCounts[k];
+        const pct = totalExits > 0 ? ((count / totalExits) * 100).toFixed(1) : '0.0';
+        return `${k}: ${count} (${pct}%)`;
+    });
+
+    const ctxGender = document.getElementById('chart-attrition-gender').getContext('2d');
+    if (charts.attritionGender) charts.attritionGender.destroy();
+    charts.attritionGender = new Chart(ctxGender, {
+        type: 'doughnut',
+        data: {
+            labels: genderLabels,
+            datasets: [{
+                data: Object.values(genderCounts),
+                backgroundColor: ['#FF6F61', '#1A1A1A', '#AEAEAE', '#4A90E2'],
+                borderWidth: 1.5,
+                borderColor: '#ffffff'
+            }]
+        },
+        options: {
+            ...commonChartOptions,
+            cutout: '70%'
+        }
+    });
+
+    // 3. Grade table
+    const gradeCounts = {};
+    exits.forEach(e => {
+        const g = e.grade || 'Unassigned';
+        gradeCounts[g] = (gradeCounts[g] || 0) + 1;
+    });
+    const gradeList = Object.keys(gradeCounts).map(g => ({
+        grade: g,
+        count: gradeCounts[g],
+        pct: totalExits > 0 ? ((gradeCounts[g] / totalExits) * 100).toFixed(1) : '0.0'
+    })).sort((a, b) => b.count - a.count);
+
+    const tbodyGrade = document.getElementById('tbody-attrition-grade');
+    if (tbodyGrade) {
+        tbodyGrade.innerHTML = '';
+        gradeList.forEach(item => {
+            const row = document.createElement('tr');
+            row.innerHTML = `
+                <td><strong>${item.grade}</strong></td>
+                <td class="align-right">${item.count}</td>
+                <td class="align-right">${item.pct}%</td>
+            `;
+            tbodyGrade.appendChild(row);
+        });
+    }
+
+    // 4. Top reasons table
+    const reasonCounts = {};
+    exits.forEach(e => {
+        const r = e.reasonForLeaving || 'Unassigned';
+        reasonCounts[r] = (reasonCounts[r] || 0) + 1;
+    });
+    const reasonList = Object.keys(reasonCounts).map(r => ({
+        reason: r,
+        count: reasonCounts[r],
+        pct: totalExits > 0 ? ((reasonCounts[r] / totalExits) * 100).toFixed(1) : '0.0'
+    })).sort((a, b) => b.count - a.count);
+
+    const tbodyReasons = document.getElementById('tbody-attrition-reasons-total');
+    if (tbodyReasons) {
+        tbodyReasons.innerHTML = '';
+        reasonList.forEach(item => {
+            const row = document.createElement('tr');
+            row.innerHTML = `
+                <td><strong>${item.reason}</strong></td>
+                <td class="align-right">${item.count}</td>
+                <td class="align-right">${item.pct}%</td>
+            `;
+            tbodyReasons.appendChild(row);
+        });
+    }
 }
 
 // ==========================================================================
@@ -1327,80 +2033,164 @@ function renderFFCharts() {
     }
     const data = getFilteredFF();
 
-    // 2. Ageing Buckets (Doughnut)
-    const ageBuckets = { '1 Day': 0, '2 Days': 0, 'More than 2 Days': 0 };
-    data.forEach(d => {
-        if (d.ageing <= 1) ageBuckets['1 Day']++;
-        else if (d.ageing === 2) ageBuckets['2 Days']++;
-        else ageBuckets['More than 2 Days']++;
+    // 2. Ageing Buckets (Double Bar Graph Month-wise)
+    const ffIgnoringMonth = getFilteredFFIgnoringMonth();
+    const monthOrder = [
+        'January', 'February', 'March', 'April', 'May', 'June',
+        'July', 'August', 'September', 'October', 'November', 'December'
+    ];
+
+    const monthGroups = {};
+    ffIgnoringMonth.forEach(item => {
+        const m = item.month;
+        if (!m) return;
+        if (!monthGroups[m]) {
+            monthGroups[m] = {
+                month: m,
+                count1to2: 0,
+                count2plus: 0,
+                total: 0
+            };
+        }
+        monthGroups[m].total++;
+        if (item.ageing <= 2) {
+            monthGroups[m].count1to2++;
+        } else {
+            monthGroups[m].count2plus++;
+        }
     });
 
-    const totalAge = Object.values(ageBuckets).reduce((sum, c) => sum + c, 0) || 1;
-    const ageLabels = Object.keys(ageBuckets).map(k => {
-        const count = ageBuckets[k];
-        const pct = ((count / totalAge) * 100).toFixed(1);
-        return `${k}: ${count.toLocaleString()} (${pct}%)`;
+    const sortedMonths = Object.keys(monthGroups).sort((a, b) => {
+        return monthOrder.indexOf(a) - monthOrder.indexOf(b);
     });
+
+    const count1to2Data = sortedMonths.map(m => monthGroups[m].count1to2);
+    const count2plusData = sortedMonths.map(m => monthGroups[m].count2plus);
 
     const ctxBuckets = document.getElementById('chart-ff-buckets').getContext('2d');
     if (charts.ffBuckets) charts.ffBuckets.destroy();
+
     charts.ffBuckets = new Chart(ctxBuckets, {
-        type: 'doughnut',
+        type: 'bar',
         data: {
-            labels: ageLabels,
-            datasets: [{
-                data: Object.values(ageBuckets),
-                backgroundColor: ['#10b981', '#f59e0b', '#ef4444'],
-                borderWidth: 1.5,
-                borderColor: '#ffffff'
-            }]
+            labels: sortedMonths,
+            datasets: [
+                {
+                    label: '1-2 days',
+                    data: count1to2Data,
+                    backgroundColor: 'rgba(16, 185, 129, 0.85)',
+                    borderRadius: 4
+                },
+                {
+                    label: '2+ days',
+                    data: count2plusData,
+                    backgroundColor: 'rgba(239, 68, 68, 0.85)',
+                    borderRadius: 4
+                }
+            ]
         },
         options: {
             ...commonChartOptions,
-            cutout: '70%'
+            scales: {
+                x: { stacked: false, grid: { display: false } },
+                y: { stacked: false, grid: { color: '#f1f5f9' } }
+            },
+            plugins: {
+                ...commonChartOptions.plugins,
+                tooltip: {
+                    callbacks: {
+                        label: function (context) {
+                            const label = context.dataset.label || '';
+                            const val = context.raw || 0;
+                            const m = context.label;
+                            const grp = monthGroups[m];
+                            if (!grp) return `${label}: ${val}`;
+                            const pct = grp.total > 0 ? ((val / grp.total) * 100).toFixed(1) : '0.0';
+                            return `${label}: ${val} (${pct}%)`;
+                        }
+                    }
+                }
+            }
         }
     });
 
-    // 3. NDC Clearance (Pie)
-    const ndcBuckets = { 'Same Day': 0, '1 Day': 0, 'More than 2 days': 0 };
-    data.forEach(d => {
-        if (!d.clearanceDates.highest || !d.lastWorkingDay) return;
-        const highestDate = new Date(d.clearanceDates.highest);
-        const dolDate = new Date(d.lastWorkingDay);
-        if (isNaN(highestDate.getTime()) || isNaN(dolDate.getTime())) return;
-        const diffDays = Math.round((highestDate - dolDate) / (1000 * 60 * 60 * 24));
-        if (diffDays <= 0) {
-            ndcBuckets['Same Day']++;
-        } else if (diffDays === 1) {
-            ndcBuckets['1 Day']++;
-        } else {
-            ndcBuckets['More than 2 days']++;
-        }
-    });
+    // 3. NDC Clearance stacked bar chart by Department
+    const depts = ['HRBP', 'IT', 'Finance', 'Admin'];
+    const deptKeys = {
+        'HRBP': 'hrbp',
+        'IT': 'it',
+        'Finance': 'finance',
+        'Admin': 'admin'
+    };
 
-    const totalNdc = Object.values(ndcBuckets).reduce((sum, c) => sum + c, 0) || 1;
-    const ndcLabels = Object.keys(ndcBuckets).map(k => {
-        const count = ndcBuckets[k];
-        const pct = ((count / totalNdc) * 100).toFixed(1);
-        return `${k}: ${count.toLocaleString()} (${pct}%)`;
+    const ontimeCounts = [];
+    const delayCounts = [];
+
+    depts.forEach(d => {
+        const key = deptKeys[d];
+        let ontime = 0;
+        let delay = 0;
+
+        data.forEach(item => {
+            if (!item.lastWorkingDay) {
+                delay++;
+                return;
+            }
+            const isOntime = item.clearanceDates[key] && (item.clearanceDates[key] === item.lastWorkingDay);
+            if (isOntime) {
+                ontime++;
+            } else {
+                delay++;
+            }
+        });
+
+        ontimeCounts.push(ontime);
+        delayCounts.push(delay);
     });
 
     const ctxNdc = document.getElementById('chart-ff-ndc-clearance').getContext('2d');
     if (charts.ffNdcClearance) charts.ffNdcClearance.destroy();
+
     charts.ffNdcClearance = new Chart(ctxNdc, {
-        type: 'doughnut',
+        type: 'bar',
         data: {
-            labels: ndcLabels,
-            datasets: [{
-                data: Object.values(ndcBuckets),
-                backgroundColor: ['#10b981', '#f59e0b', '#ef4444'],
-                borderWidth: 1.5,
-                borderColor: '#ffffff'
-            }]
+            labels: depts,
+            datasets: [
+                {
+                    label: 'Ontime',
+                    data: ontimeCounts,
+                    backgroundColor: 'rgba(16, 185, 129, 0.85)',
+                    borderRadius: 4
+                },
+                {
+                    label: 'Delay',
+                    data: delayCounts,
+                    backgroundColor: 'rgba(239, 68, 68, 0.85)',
+                    borderRadius: 4
+                }
+            ]
         },
         options: {
             ...commonChartOptions,
-            cutout: '70%'
+            scales: {
+                x: { stacked: true, grid: { display: false } },
+                y: { stacked: true, grid: { color: '#f1f5f9' } }
+            },
+            plugins: {
+                ...commonChartOptions.plugins,
+                tooltip: {
+                    callbacks: {
+                        label: function (context) {
+                            const label = context.dataset.label || '';
+                            const val = context.raw || 0;
+                            const idx = context.dataIndex;
+                            const total = ontimeCounts[idx] + delayCounts[idx];
+                            const pct = total > 0 ? ((val / total) * 100).toFixed(1) : '0.0';
+                            return `${label}: ${val} (${pct}%)`;
+                        }
+                    }
+                }
+            }
         }
     });
 
@@ -1426,7 +2216,7 @@ function renderFFCharts() {
             labels: paymentLabels,
             datasets: [{
                 data: Object.values(paymentCounts),
-                backgroundColor: ['#10b981', '#ef4444'],
+                backgroundColor: ['#FF6F61', '#1A1A1A'],
                 borderWidth: 1.5,
                 borderColor: '#ffffff'
             }]
@@ -1454,14 +2244,11 @@ function renderAttritionCharts() {
         else hrbpExits[lead].involuntary++;
     });
 
-    const sortedHrbps = Object.keys(hrbpExits).sort((a, b) => {
-        const totalA = hrbpExits[a].voluntary + hrbpExits[a].involuntary;
-        const totalB = hrbpExits[b].voluntary + hrbpExits[b].involuntary;
-        return totalB - totalA;
-    }).slice(0, 10);
+    // Explicitly define the 4 actual HRBP Leads as requested by the user
+    const sortedHrbps = ['Asha Khan', 'Tanu Srivastava', 'Janhavi Malhotra', 'Charvi Sarin'];
 
-    const voluntaryData = sortedHrbps.map(p => hrbpExits[p].voluntary);
-    const involuntaryData = sortedHrbps.map(p => hrbpExits[p].involuntary);
+    const voluntaryData = sortedHrbps.map(p => hrbpExits[p] ? hrbpExits[p].voluntary : 0);
+    const involuntaryData = sortedHrbps.map(p => hrbpExits[p] ? hrbpExits[p].involuntary : 0);
 
     const ctxPl = document.getElementById('chart-attrition-pl').getContext('2d');
     if (charts.attritionPl) charts.attritionPl.destroy();
@@ -1473,13 +2260,13 @@ function renderAttritionCharts() {
                 {
                     label: 'Voluntary',
                     data: voluntaryData,
-                    backgroundColor: 'rgba(16, 185, 129, 0.85)',
+                    backgroundColor: 'rgba(255, 111, 97, 0.85)',
                     borderRadius: 4
                 },
                 {
                     label: 'Involuntary',
                     data: involuntaryData,
-                    backgroundColor: 'rgba(239, 68, 68, 0.85)',
+                    backgroundColor: 'rgba(26, 26, 26, 0.85)',
                     borderRadius: 4
                 }
             ]
@@ -1514,7 +2301,7 @@ function renderAttritionCharts() {
             labels: volLabels,
             datasets: [{
                 data: Object.values(volCounts),
-                backgroundColor: ['#10b981', '#ef4444'],
+                backgroundColor: ['#FF6F61', '#1A1A1A'],
                 borderWidth: 1.5,
                 borderColor: '#ffffff'
             }]
@@ -1557,7 +2344,7 @@ function renderAttritionCharts() {
             labels: tenureLabels,
             datasets: [{
                 data: Object.values(tenureBuckets),
-                backgroundColor: ['#ef4444', '#fbbf24', '#f59e0b', '#10b981'],
+                backgroundColor: ['#FF6F61', '#1A1A1A', '#757575', '#E0E0E0'],
                 borderWidth: 1.5,
                 borderColor: '#ffffff'
             }]
@@ -1644,24 +2431,26 @@ function triggerPivotModal(chartId, clickedLabel, datasetLabel) {
             subsetData = rawSubset.filter(d => d.clearanceStatus === cleanLabel);
             titleContext = `F&F Status = ${cleanLabel}`;
         } else if (chartId === 'chart-ff-buckets') {
+            rawSubset = getFilteredFFIgnoringMonth();
             subsetData = rawSubset.filter(d => {
-                if (cleanLabel === '1 Day') return d.ageing <= 1;
-                if (cleanLabel === '2 Days') return d.ageing === 2;
-                return d.ageing > 2;
+                const monthMatch = d.month === clickedLabel;
+                let bucketMatch = false;
+                if (datasetLabel === '1-2 days') {
+                    bucketMatch = d.ageing <= 2;
+                } else if (datasetLabel === '2+ days') {
+                    bucketMatch = d.ageing > 2;
+                }
+                return monthMatch && bucketMatch;
             });
-            titleContext = `F&F Ageing = ${cleanLabel}`;
+            titleContext = `Month: ${clickedLabel} | Ageing: ${datasetLabel}`;
         } else if (chartId === 'chart-ff-ndc-clearance') {
+            const deptKey = clickedLabel.toLowerCase(); // 'hrbp', 'it', 'finance', 'admin'
             subsetData = rawSubset.filter(d => {
-                if (!d.clearanceDates.highest || !d.lastWorkingDay) return false;
-                const highestDate = new Date(d.clearanceDates.highest);
-                const dolDate = new Date(d.lastWorkingDay);
-                if (isNaN(highestDate.getTime()) || isNaN(dolDate.getTime())) return false;
-                const diffDays = Math.round((highestDate - dolDate) / (1000 * 60 * 60 * 24));
-                if (cleanLabel === 'Same Day') return diffDays <= 0;
-                if (cleanLabel === '1 Day') return diffDays === 1;
-                return diffDays >= 2;
+                if (!d.lastWorkingDay) return false;
+                const matches = d.clearanceDates[deptKey] === d.lastWorkingDay;
+                return datasetLabel === 'Ontime' ? matches : !matches;
             });
-            titleContext = `NDC Clearance Gap = ${cleanLabel}`;
+            titleContext = `Dept: ${clickedLabel} | NDC Status: ${datasetLabel}`;
         } else if (chartId === 'chart-ff-payment-type') {
             subsetData = rawSubset.filter(d => d.paymentType === cleanLabel);
             titleContext = `F&F Payout Type = ${cleanLabel}`;
@@ -1845,65 +2634,49 @@ function populateReasonsPlDropdown() {
 }
 
 function renderTopExitReasonsList(selectedPl) {
-    const voluntaryList = document.getElementById('voluntary-reasons-list');
-    const involuntaryList = document.getElementById('involuntary-reasons-list');
+    const listContainer = document.getElementById('reasons-list-container');
+    if (!listContainer) return;
 
-    if (!voluntaryList || !involuntaryList) return;
+    let exits = state.attritionData.filter(e => selectedPl === 'All' || e.plName === selectedPl);
 
-    const exits = state.attritionData.filter(e => selectedPl === 'All' || e.plName === selectedPl);
+    const tab = state.activeReasonsTab || 'voluntary';
+    if (tab === 'voluntary') {
+        exits = exits.filter(e => e.exitType === 'Voluntary' && !e.isDropout);
+    } else if (tab === 'involuntary') {
+        exits = exits.filter(e => e.exitType === 'Involuntary' && !e.isDropout);
+    } else if (tab === 'dropout') {
+        exits = exits.filter(e => e.isDropout);
+    }
 
-    const volCounts = {};
-    const involCounts = {};
-    let totalVol = 0;
-    let totalInvol = 0;
-
+    const counts = {};
+    let total = 0;
     exits.forEach(e => {
-        if (e.exitType === 'Voluntary') {
-            volCounts[e.reasonForLeaving] = (volCounts[e.reasonForLeaving] || 0) + 1;
-            totalVol++;
-        } else {
-            involCounts[e.reasonForLeaving] = (involCounts[e.reasonForLeaving] || 0) + 1;
-            totalInvol++;
-        }
+        const reason = e.reasonForLeaving || 'Unassigned';
+        counts[reason] = (counts[reason] || 0) + 1;
+        total++;
     });
 
-    const volSorted = Object.keys(volCounts).map(r => ({
+    const sorted = Object.keys(counts).map(r => ({
         reason: r,
-        count: volCounts[r],
-        pct: totalVol > 0 ? Math.round((volCounts[r] / totalVol) * 100) : 0
+        count: counts[r],
+        pct: total > 0 ? Math.round((counts[r] / total) * 100) : 0
     })).sort((a, b) => b.count - a.count).slice(0, 5);
 
-    const involSorted = Object.keys(involCounts).map(r => ({
-        reason: r,
-        count: involCounts[r],
-        pct: totalInvol > 0 ? Math.round((involCounts[r] / totalInvol) * 100) : 0
-    })).sort((a, b) => b.count - a.count).slice(0, 3);
+    listContainer.innerHTML = sorted.length > 0 ? '' : `<p style="font-size:0.813rem;color:var(--color-text-muted); padding: 0.5rem 0;">No exit reasons recorded for ${tab}.</p>`;
 
-    voluntaryList.innerHTML = volSorted.length > 0 ? '' : '<p style="font-size:0.813rem;color:var(--color-text-muted);">No voluntary cases recorded.</p>';
-    volSorted.forEach(item => {
-        voluntaryList.innerHTML += `
+    sorted.forEach(item => {
+        let barClass = 'voluntary';
+        if (tab === 'involuntary') barClass = 'involuntary';
+        else if (tab === 'dropout') barClass = 'dropout';
+
+        listContainer.innerHTML += `
             <div class="reason-item">
                 <div class="reason-info-row">
                     <span>${item.reason}</span>
                     <span>${item.count} (${item.pct}%)</span>
                 </div>
                 <div class="reason-bar-container">
-                    <div class="reason-bar-fill voluntary" style="width: ${item.pct}%"></div>
-                </div>
-            </div>
-        `;
-    });
-
-    involuntaryList.innerHTML = involSorted.length > 0 ? '' : '<p style="font-size:0.813rem;color:var(--color-text-muted);">No involuntary cases recorded.</p>';
-    involSorted.forEach(item => {
-        involuntaryList.innerHTML += `
-            <div class="reason-item">
-                <div class="reason-info-row">
-                    <span>${item.reason}</span>
-                    <span>${item.count} (${item.pct}%)</span>
-                </div>
-                <div class="reason-bar-container">
-                    <div class="reason-bar-fill involuntary" style="width: ${item.pct}%"></div>
+                    <div class="reason-bar-fill ${barClass}" style="width: ${item.pct}%"></div>
                 </div>
             </div>
         `;
@@ -1923,7 +2696,9 @@ function renderFFRecoveryAnalysisTable() {
         if (!plGroups[pl]) {
             plGroups[pl] = {
                 plName: pl,
+                recoveredHeadcount: 0,
                 totalRecovered: 0,
+                unrecoveredHeadcount: 0,
                 totalUnrecovered: 0
             };
         }
@@ -1933,9 +2708,14 @@ function renderFFRecoveryAnalysisTable() {
         const unpaid = Math.abs(item.finalAmountAE || 0);
 
         g.totalUnrecovered += unpaid;
+        if (unpaid > 0) {
+            g.unrecoveredHeadcount++;
+        }
 
-        if (item.ffAmountAA !== item.finalAmountAE) {
-            g.totalRecovered += Math.max(0, due - unpaid);
+        const recovered = due - unpaid;
+        if (recovered !== 0) {
+            g.totalRecovered += Math.max(0, recovered);
+            g.recoveredHeadcount++;
         }
     });
 
@@ -1967,7 +2747,9 @@ function renderFFRecoveryAnalysisTable() {
         const row = document.createElement('tr');
         row.innerHTML = `
             <td><strong>${item.plName}</strong></td>
+            <td class="align-right">${item.recoveredHeadcount}</td>
             <td class="align-right" style="color:var(--status-success-text); font-weight:600;">₹${Math.round(item.totalRecovered).toLocaleString('en-IN')}</td>
+            <td class="align-right">${item.unrecoveredHeadcount}</td>
             <td class="align-right" style="color:var(--status-danger-text); font-weight:600;">₹${Math.round(item.totalUnrecovered).toLocaleString('en-IN')}</td>
         `;
         tbody.appendChild(row);
@@ -1985,9 +2767,12 @@ function renderFFRecoveryAnalysisTable() {
 function renderFFPayoutPLTable() {
     const data = getFilteredFF();
     const plPayouts = {};
+    const plHeadcounts = {};
     data.forEach(d => {
-        if (d.clearanceStatus === 'Settled' && d.paymentType === 'Payable') {
-            plPayouts[d.plName] = (plPayouts[d.plName] || 0) + (d.settlementAmount || 0);
+        if (d.paymentType === 'Payable') {
+            const pl = d.plName || 'Unassigned';
+            plPayouts[pl] = (plPayouts[pl] || 0) + (d.finalAmountAE || 0);
+            plHeadcounts[pl] = (plHeadcounts[pl] || 0) + 1;
         }
     });
 
@@ -2000,6 +2785,7 @@ function renderFFPayoutPLTable() {
         const row = document.createElement('tr');
         row.innerHTML = `
             <td><strong>${pl}</strong></td>
+            <td class="align-right">${plHeadcounts[pl] || 0}</td>
             <td class="align-right" style="font-weight:600; color:var(--status-success-text);">₹${Math.round(plPayouts[pl]).toLocaleString('en-IN')}</td>
         `;
         tbody.appendChild(row);
@@ -2026,4 +2812,374 @@ function renderAttritionTypeTable() {
         `;
         tbody.appendChild(card);
     });
+}
+
+// ==========================================================================
+// GOOGLE SHEETS API INTEGRATION & SYNC ENGINE
+// ==========================================================================
+
+function setupModalTabs() {
+    const tabFile = document.getElementById('modal-tab-file');
+    const tabSheets = document.getElementById('modal-tab-sheets');
+    const panelFile = document.getElementById('modal-panel-file');
+    const panelSheets = document.getElementById('modal-panel-sheets');
+
+    if (!tabFile || !tabSheets || !panelFile || !panelSheets) return;
+
+    tabFile.addEventListener('click', () => {
+        tabFile.classList.add('active');
+        tabSheets.classList.remove('active');
+        panelFile.classList.remove('hidden');
+        panelSheets.classList.add('hidden');
+        tabFile.style.borderBottomColor = 'var(--color-blue-accent)';
+        tabFile.style.color = 'var(--color-blue-accent)';
+        tabSheets.style.borderBottomColor = 'transparent';
+        tabSheets.style.color = 'var(--color-text-muted)';
+    });
+
+    tabSheets.addEventListener('click', () => {
+        tabSheets.classList.add('active');
+        tabFile.classList.remove('active');
+        panelSheets.classList.remove('hidden');
+        panelFile.classList.add('hidden');
+        tabSheets.style.borderBottomColor = 'var(--color-blue-accent)';
+        tabSheets.style.color = 'var(--color-blue-accent)';
+        tabFile.style.borderBottomColor = 'transparent';
+        tabFile.style.color = 'var(--color-text-muted)';
+        populateSheetsConfigUI();
+    });
+}
+
+function loadGoogleSheetsConfig() {
+    const saved = localStorage.getItem('dash_google_sheets_config');
+    if (saved) {
+        try {
+            state.googleSheets = { ...state.googleSheets, ...JSON.parse(saved) };
+        } catch (e) {
+            console.error('Error loading Google Sheets config:', e);
+        }
+    }
+}
+
+function saveGoogleSheetsConfig() {
+    localStorage.setItem('dash_google_sheets_config', JSON.stringify(state.googleSheets));
+}
+
+function populateSheetsConfigUI() {
+    const enabledEl = document.getElementById('sheet-sync-enabled');
+    const methodEl = document.getElementById('sheet-sync-method');
+    const apiKeyEl = document.getElementById('sheet-api-key');
+    const spreadIdEl = document.getElementById('sheet-spreadsheet-id');
+    const rangeEl = document.getElementById('sheet-range');
+    const pubUrlEl = document.getElementById('sheet-published-url');
+    const intervalEl = document.getElementById('sheet-sync-interval');
+
+    if (enabledEl) enabledEl.checked = state.googleSheets.enabled;
+    if (methodEl) methodEl.value = state.googleSheets.method;
+    if (apiKeyEl) apiKeyEl.value = state.googleSheets.apiKey;
+    if (spreadIdEl) spreadIdEl.value = state.googleSheets.spreadsheetId;
+    if (rangeEl) rangeEl.value = state.googleSheets.range;
+    if (pubUrlEl) pubUrlEl.value = state.googleSheets.publishedUrl;
+    if (intervalEl) intervalEl.value = state.googleSheets.refreshInterval;
+
+    toggleSheetMethodFields(state.googleSheets.method);
+}
+
+function toggleSheetMethodFields(method) {
+    const apiFields = document.getElementById('sheet-api-fields');
+    const pubFields = document.getElementById('sheet-published-fields');
+
+    if (!apiFields || !pubFields) return;
+
+    if (method === 'api') {
+        apiFields.classList.remove('hidden');
+        pubFields.classList.add('hidden');
+    } else {
+        apiFields.classList.add('hidden');
+        pubFields.classList.remove('hidden');
+    }
+}
+
+async function saveAndSyncSheetsConfig() {
+    const feedback = document.getElementById('sheets-sync-feedback');
+    const feedbackText = document.getElementById('sheets-feedback-text');
+    if (!feedback || !feedbackText) return;
+
+    feedback.className = 'feedback-alert hidden';
+
+    state.googleSheets.enabled = document.getElementById('sheet-sync-enabled').checked;
+    state.googleSheets.method = document.getElementById('sheet-sync-method').value;
+    state.googleSheets.apiKey = document.getElementById('sheet-api-key').value.trim();
+    state.googleSheets.spreadsheetId = document.getElementById('sheet-spreadsheet-id').value.trim();
+    state.googleSheets.range = document.getElementById('sheet-range').value.trim() || 'Sheet1';
+    state.googleSheets.publishedUrl = document.getElementById('sheet-published-url').value.trim();
+    state.googleSheets.refreshInterval = parseInt(document.getElementById('sheet-sync-interval').value) || 1;
+
+    saveGoogleSheetsConfig();
+    setupGoogleSheetsAutoRefresh();
+
+    // Trigger immediate sync
+    feedback.className = 'feedback-alert success'; // styling neutral container
+    feedback.style.backgroundColor = 'var(--status-info-bg)';
+    feedback.style.color = 'var(--status-info-text)';
+    feedbackText.textContent = 'Connecting to Google Sheets...';
+    feedback.classList.remove('hidden');
+
+    const success = await syncGoogleSheetsData();
+    if (success) {
+        feedback.className = 'feedback-alert success';
+        feedback.style.backgroundColor = 'var(--status-success-bg)';
+        feedback.style.color = 'var(--status-success-text)';
+        feedbackText.textContent = 'Successfully saved and synced Google Sheets data!';
+        showToast('Google Sheets sync successful!', 'success');
+        setTimeout(() => {
+            const modal = document.getElementById('sync-modal');
+            if (modal) modal.setAttribute('aria-hidden', 'true');
+        }, 1200);
+    } else {
+        feedback.className = 'feedback-alert error';
+        feedback.style.backgroundColor = 'var(--status-danger-bg)';
+        feedback.style.color = 'var(--status-danger-text)';
+        feedbackText.textContent = 'Connection failed. Please check spreadsheet URL/API settings.';
+    }
+}
+
+async function syncGoogleSheetsData() {
+    try {
+        let rows = [];
+        if (state.googleSheets.method === 'api') {
+            rows = await fetchGoogleSheetsAPI();
+        } else {
+            rows = await fetchGoogleSheetsPublished();
+        }
+
+        if (!rows || rows.length === 0) {
+            throw new Error('No data rows retrieved from Google Sheet.');
+        }
+
+        normalizeExcelRows(rows);
+        saveState();
+        setDefaultFiltersToLatest();
+        populateDropdownFilters();
+        updateUI();
+        state.googleSheets.lastRefreshed = new Date();
+        const timeStr = state.googleSheets.lastRefreshed.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+        updateSyncStatus(`Synced Google Sheet at ${timeStr}`);
+        return true;
+    } catch (error) {
+        console.error('Google Sheets sync error:', error);
+        showToast(`Sync failed: ${error.message}`, 'error');
+        return false;
+    }
+}
+
+async function fetchGoogleSheetsAPI() {
+    const { spreadsheetId, apiKey, range } = state.googleSheets;
+    if (!spreadsheetId || !apiKey) {
+        throw new Error('Spreadsheet ID and API Key are required.');
+    }
+    const url = `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent(range)}?key=${apiKey}`;
+    const response = await fetch(url);
+    if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        const msg = errorData.error?.message || response.statusText;
+        throw new Error(`Google API Error: ${msg} (${response.status})`);
+    }
+    const data = await response.json();
+    if (!data.values || data.values.length === 0) {
+        throw new Error('No values found in the spreadsheet tab/range.');
+    }
+
+    // Convert values grid (array of arrays) into array of objects using headers from row 0
+    const headers = data.values[0];
+    const rows = [];
+    for (let i = 1; i < data.values.length; i++) {
+        const rowVal = data.values[i];
+        const obj = {};
+        headers.forEach((header, index) => {
+            obj[header] = rowVal[index] !== undefined ? rowVal[index] : '';
+        });
+        rows.push(obj);
+    }
+    return rows;
+}
+
+async function fetchGoogleSheetsPublished() {
+    const { publishedUrl } = state.googleSheets;
+    if (!publishedUrl) {
+        throw new Error('Published Google Sheet URL is required.');
+    }
+
+    // We can directly fetch published URLs as they support CORS
+    const response = await fetch(publishedUrl);
+    if (!response.ok) {
+        throw new Error(`Failed to fetch published sheet: ${response.statusText} (${response.status})`);
+    }
+    const arrayBuffer = await response.arrayBuffer();
+
+    // Parse XLSX using SheetJS
+    const data = new Uint8Array(arrayBuffer);
+    const workbook = XLSX.read(data, { type: 'array', cellDates: true });
+    const sheetName = workbook.SheetNames[0];
+    const worksheet = workbook.Sheets[sheetName];
+    const rows = XLSX.utils.sheet_to_json(worksheet);
+    return rows;
+}
+
+
+
+async function saveAndSyncSheetsConfig() {
+    const feedback = document.getElementById('sheets-sync-feedback');
+    const feedbackText = document.getElementById('sheets-feedback-text');
+    if (!feedback || !feedbackText) return;
+
+    feedback.className = 'feedback-alert hidden';
+
+    state.googleSheets.enabled = document.getElementById('sheet-sync-enabled').checked;
+    state.googleSheets.method = document.getElementById('sheet-sync-method').value;
+    state.googleSheets.apiKey = document.getElementById('sheet-api-key').value.trim();
+    state.googleSheets.spreadsheetId = document.getElementById('sheet-spreadsheet-id').value.trim();
+    state.googleSheets.range = document.getElementById('sheet-range').value.trim();
+    state.googleSheets.publishedUrl = document.getElementById('sheet-published-url').value.trim();
+    state.googleSheets.refreshInterval = parseInt(document.getElementById('sheet-sync-interval').value) || 1;
+
+    localStorage.setItem('dash_sheets_config', JSON.stringify(state.googleSheets));
+
+    const success = await syncGoogleSheetsData();
+    if (success) {
+        feedback.className = 'feedback-alert success';
+        feedbackText.textContent = 'Successfully saved and synced Google Sheets data!';
+        showToast('Google Sheets sync successful!', 'success');
+        setupGoogleSheetsAutoRefresh();
+        setTimeout(() => {
+            const modal = document.getElementById('sync-modal');
+            if (modal) modal.setAttribute('aria-hidden', 'true');
+        }, 1500);
+    } else {
+        feedback.className = 'feedback-alert error';
+        feedbackText.textContent = 'Sync failed. Please check credentials/URL and console logs.';
+    }
+}
+
+async function syncGoogleSheetsData() {
+    if (!state.googleSheets.enabled) return false;
+    updateSyncStatus('Syncing Google Sheet...');
+
+    try {
+        let rows = [];
+        if (state.googleSheets.method === 'api') {
+            rows = await fetchGoogleSheetsAPI();
+        } else {
+            rows = await fetchGoogleSheetsPublished();
+        }
+
+        if (!rows || rows.length === 0) {
+            throw new Error('No records returned from Google Sheet.');
+        }
+
+        normalizeExcelRows(rows);
+
+        try {
+            saveState();
+        } catch (e) {
+            console.warn('LocalStorage full, skipped caching:', e);
+        }
+
+        populateDropdownFilters();
+        updateUI();
+
+        const timeStr = new Date().toLocaleTimeString();
+        updateSyncStatus(`Synced Google Sheet at ${timeStr}`);
+        state.googleSheets.lastRefreshed = timeStr;
+        return true;
+    } catch (error) {
+        console.error('Google Sheets sync error:', error);
+        showToast(`Sync failed: ${error.message}`, 'error');
+        return false;
+    }
+}
+
+async function fetchGoogleSheetsAPI() {
+    const { spreadsheetId, apiKey, range } = state.googleSheets;
+    if (!spreadsheetId || !apiKey) {
+        throw new Error('Spreadsheet ID and API Key are required for API method.');
+    }
+    const url = `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent(range)}?key=${apiKey}`;
+    const response = await fetch(url);
+    if (!response.ok) {
+        throw new Error(`Failed to fetch from Google Sheets API: ${response.statusText} (${response.status})`);
+    }
+    const data = await response.json();
+    if (!data.values || data.values.length === 0) {
+        throw new Error('No data found in the specified range.');
+    }
+
+    const headers = data.values[0];
+    const rows = [];
+    for (let i = 1; i < data.values.length; i++) {
+        const row = {};
+        const vals = data.values[i];
+        headers.forEach((header, index) => {
+            row[header] = vals[index] !== undefined ? vals[index] : '';
+        });
+        rows.push(row);
+    }
+    return rows;
+}
+
+async function fetchGoogleSheetsPublished() {
+    const { publishedUrl } = state.googleSheets;
+    if (!publishedUrl) {
+        throw new Error('Published Spreadsheet URL is required for Published method.');
+    }
+
+    const response = await fetch(publishedUrl);
+    if (!response.ok) {
+        throw new Error(`Failed to fetch published sheet: ${response.statusText} (${response.status})`);
+    }
+    const arrayBuffer = await response.arrayBuffer();
+
+    const data = new Uint8Array(arrayBuffer);
+    const workbook = XLSX.read(data, { type: 'array', cellDates: true });
+    const sheetName = workbook.SheetNames[0];
+    const worksheet = workbook.Sheets[sheetName];
+    const rows = XLSX.utils.sheet_to_json(worksheet);
+    return rows;
+}
+
+let googleSheetsIntervalId = null;
+let secondsRemaining = 60;
+let countdownIntervalId = null;
+
+function setupGoogleSheetsAutoRefresh() {
+    if (googleSheetsIntervalId) clearInterval(googleSheetsIntervalId);
+    if (countdownIntervalId) clearInterval(countdownIntervalId);
+
+    const countdownEl = document.getElementById('auto-refresh-countdown');
+    if (!countdownEl) return;
+
+    if (!state.googleSheets.enabled) {
+        countdownEl.style.display = 'none';
+        return;
+    }
+
+    countdownEl.style.display = 'inline';
+    secondsRemaining = state.googleSheets.refreshInterval * 60;
+
+    countdownEl.textContent = `(Sync in ${secondsRemaining}s)`;
+
+    countdownIntervalId = setInterval(() => {
+        if (secondsRemaining > 1) {
+            secondsRemaining--;
+            countdownEl.textContent = `(Sync in ${secondsRemaining}s)`;
+        } else {
+            countdownEl.textContent = `(Syncing...)`;
+        }
+    }, 1000);
+
+    googleSheetsIntervalId = setInterval(async () => {
+        const success = await syncGoogleSheetsData();
+        secondsRemaining = state.googleSheets.refreshInterval * 60;
+        countdownEl.textContent = `(Sync in ${secondsRemaining}s)`;
+    }, state.googleSheets.refreshInterval * 60 * 1000);
 }

@@ -15,7 +15,7 @@
     rel="stylesheet">
 
   <!-- CSS Stylesheet -->
-  <link rel="stylesheet" href="style.css?v=37">
+  <link rel="stylesheet" href="style.css?v=46">
 
   <!-- Chart.js CDN -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
@@ -57,6 +57,8 @@
         <div class="sync-status">
           <span class="status-indicator"></span>
           <span id="sync-status-text">Using demo data</span>
+          <span id="auto-refresh-countdown"
+            style="display:none; font-size:0.75rem; font-weight:600; color:var(--color-blue-accent); margin-left:0.25rem;"></span>
         </div>
         <button id="btn-sync-data" class="btn btn-primary">
           <svg class="btn-icon" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"
@@ -107,32 +109,42 @@
 
         <div class="filter-group">
           <label for="filter-hrbp-lead">HRBP Lead</label>
-          <select id="select-hrbp-lead" class="filter-select">
-            <option value="All">All Leads</option>
-          </select>
+          <div class="custom-dropdown" id="dropdown-hrbp-lead">
+            <button class="dropdown-trigger" id="btn-filter-hrbp">All Leads</button>
+            <div class="dropdown-content" id="dropdown-hrbp-content">
+              <!-- JS-injected checkoptions -->
+            </div>
+          </div>
         </div>
 
         <div class="filter-group">
-          <label for="select-pl-name">P&L Name</label>
-          <select id="select-pl-name" class="filter-select">
-            <option value="All">All Departments</option>
-          </select>
+          <label for="filter-pl-name">P&L Name</label>
+          <div class="custom-dropdown" id="dropdown-pl-name">
+            <button class="dropdown-trigger" id="btn-filter-pl">All P&L</button>
+            <div class="dropdown-content" id="dropdown-pl-content">
+              <!-- JS-injected checkoptions -->
+            </div>
+          </div>
         </div>
 
         <div class="filter-group">
-          <label for="select-month">Month</label>
-          <select id="select-month" class="filter-select">
-            <option value="All">All Months</option>
-          </select>
+          <label for="filter-month">Month</label>
+          <div class="custom-dropdown" id="dropdown-month">
+            <button class="dropdown-trigger" id="btn-filter-month">All Months</button>
+            <div class="dropdown-content" id="dropdown-month-content">
+              <!-- JS-injected checkoptions -->
+            </div>
+          </div>
         </div>
 
         <div class="filter-group">
-          <label for="select-year">Year</label>
-          <select id="select-year" class="filter-select">
-            <option value="All">All Years</option>
-            <option value="2025">2025</option>
-            <option value="2026">2026</option>
-          </select>
+          <label for="filter-year">Year</label>
+          <div class="custom-dropdown" id="dropdown-year">
+            <button class="dropdown-trigger" id="btn-filter-year">All Years</button>
+            <div class="dropdown-content" id="dropdown-year-content">
+              <!-- JS-injected checkoptions -->
+            </div>
+          </div>
         </div>
 
         <div class="filter-group">
@@ -157,305 +169,476 @@
 
     <!-- CONTENT VIEW 1: FULL & FINAL -->
     <section id="view-ff" class="dashboard-view active" role="tabpanel" aria-labelledby="tab-ff">
-      <!-- KPI Metrics Card Grid -->
-      <div class="kpi-grid kpi-grid-compact-ff">
-        <div class="kpi-card">
-          <div class="kpi-header">
-            <h3>Total F&F Cases</h3>
-            <span class="kpi-badge neutral">F&F</span>
-          </div>
-          <p id="kpi-ff-total" class="kpi-value">0</p>
-          <p class="kpi-subtitle">Total exit processes initiated</p>
-        </div>
+      <div class="dashboard-layout-grid">
+        <div class="dashboard-main-area">
 
-        <div class="kpi-card">
-          <div class="kpi-header">
-            <h3>Pending Clearances</h3>
-            <span id="kpi-ff-pending-badge" class="kpi-badge warning">Active</span>
-          </div>
-          <p id="kpi-ff-pending" class="kpi-value">0</p>
-          <p class="kpi-subtitle">Pending departmental approvals</p>
-        </div>
-
-        <div class="kpi-card">
-          <div class="kpi-header">
-            <h3>Settlement Clearance</h3>
-            <span class="kpi-badge success">Completion</span>
-          </div>
-          <p id="kpi-ff-rate" class="kpi-value">0%</p>
-          <p class="kpi-subtitle">Settled of total cases</p>
-        </div>
-
-        <div class="kpi-card">
-          <div class="kpi-header">
-            <h3>Average TAT</h3>
-            <span class="kpi-badge info">Ageing</span>
-          </div>
-          <p id="kpi-ff-avg-tat" class="kpi-value">0d</p>
-          <p class="kpi-subtitle">Average F&F process ageing</p>
-        </div>
-
-      </div>
-
-      <!-- F&F Charts Grid -->
-      <div class="charts-row-compact-ff">
-        <div class="chart-card">
-          <div class="chart-title">
-            <h3>Ageing Buckets Breakdown</h3>
-            <p>F&F processing time group distribution</p>
-          </div>
-          <div class="chart-container-doughnut">
-            <canvas id="chart-ff-buckets"></canvas>
-          </div>
-        </div>
-
-        <div class="chart-card">
-          <div class="chart-title">
-            <h3>Payable vs Recovery split</h3>
-            <p>Percentage split of F&F payout types</p>
-          </div>
-          <div class="chart-container-doughnut">
-            <canvas id="chart-ff-payment-type"></canvas>
-          </div>
-        </div>
-
-        <div class="chart-card">
-          <div class="chart-title">
-            <h3>NDC Clearance</h3>
-            <p>Clearance date vs DOL gap distribution</p>
-          </div>
-          <div class="chart-container-doughnut">
-            <canvas id="chart-ff-ndc-clearance"></canvas>
-          </div>
-        </div>
-      </div>
-
-      <!-- Tables Side-by-Side Row -->
-      <div class="tables-row-compact-ff">
-        <!-- Left Table: Total F&F Payout by P&L -->
-        <div class="table-col-left">
-          <div class="chart-card compact-table-card">
-            <div class="chart-title">
-              <h3>Total F&F Payout by P&L</h3>
-              <p>Settlement payouts (in ₹) in descending order</p>
-            </div>
-            <div class="compact-table-container">
-              <table id="table-ff-payout-pl" class="compact-data-table">
-                <thead>
-                  <tr>
-                    <th>P&L Name</th>
-                    <th class="align-right">Total Payout</th>
-                  </tr>
-                </thead>
-                <tbody id="tbody-ff-payout-pl">
-                  <!-- JS-injected rows -->
-                </tbody>
-              </table>
-            </div>
-          </div>
-        </div>
-
-        <!-- Right Table: Recovery & Settlement Analysis by P&L Table -->
-        <div class="table-col-right">
-          <section class="table-section" aria-label="Recovery Analysis">
-            <div class="table-header-row">
-              <div class="table-title">
-                <h2>Recovery & Settlement Analysis by P&L Home</h2>
+          <!-- KPI Metrics Card Grid -->
+          <div class="kpi-grid kpi-grid-compact-ff">
+            <div class="kpi-card">
+              <div class="kpi-header">
+                <h3>Total F&F Cases</h3>
+                <span class="kpi-badge neutral">F&F</span>
               </div>
-              <div class="table-search-box">
-                <svg class="search-icon" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"
-                  stroke="currentColor">
-                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                    d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-                </svg>
-                <input type="text" id="search-recovery-table" class="search-input" placeholder="Search recovery table...">
+              <p id="kpi-ff-total" class="kpi-value">0</p>
+              <p class="kpi-subtitle">Total exit processes initiated</p>
+            </div>
+
+            <div class="kpi-card">
+              <div class="kpi-header">
+                <h3>Clearance Summary</h3>
+                <span class="kpi-badge success">Detail</span>
+              </div>
+              <div style="margin-top: 0.35rem; flex: 1; display: flex; align-items: center;">
+                <table style="width: 100%; border-collapse: collapse; font-size: 0.75rem;">
+                  <tbody>
+                    <tr style="border-bottom: 1px solid var(--color-border); padding: 0.15rem 0;">
+                      <td style="padding: 0.15rem 0; color: var(--color-text-muted);">Total F&F</td>
+                      <td id="lbl-summary-total" class="align-right" style="font-weight: 600; text-align: right;">0</td>
+                    </tr>
+                    <tr style="border-bottom: 1px solid var(--color-border); padding: 0.15rem 0;">
+                      <td style="padding: 0.15rem 0; color: var(--color-text-muted);">Settled</td>
+                      <td id="lbl-summary-settled" class="align-right"
+                        style="font-weight: 600; text-align: right; color: var(--status-success-text);">0</td>
+                    </tr>
+                    <tr style="padding: 0.15rem 0;">
+                      <td style="padding: 0.15rem 0; color: var(--color-text-muted);">Pending</td>
+                      <td id="lbl-summary-pending" class="align-right"
+                        style="font-weight: 600; text-align: right; color: var(--status-danger-text);">0</td>
+                    </tr>
+                  </tbody>
+                </table>
               </div>
             </div>
 
-            <div class="table-container">
-              <table id="table-ff-recovery-analysis">
-                <thead>
-                  <tr>
-                    <th class="sortable" data-sort="plName">Department</th>
-                    <th class="sortable align-right" data-sort="totalRecovered">Amount Recovered (₹)</th>
-                    <th class="sortable align-right" data-sort="totalUnrecovered">Unrecovered Amount (₹)</th>
-                  </tr>
-                </thead>
-                <tbody id="tbody-ff-recovery-analysis">
-                  <!-- JS-injected rows -->
-                </tbody>
-              </table>
+            <div class="kpi-card">
+              <div class="kpi-header">
+                <h3>Average TAT</h3>
+                <span class="kpi-badge info">Ageing</span>
+              </div>
+              <p id="kpi-ff-avg-tat" class="kpi-value">0d</p>
+              <p class="kpi-subtitle">Average F&F process ageing</p>
             </div>
-            <div class="table-footer">
-              <span id="lbl-recovery-table-count">Showing 0 rows</span>
+          </div>
+
+          <!-- F&F Charts Grid -->
+          <div class="charts-row-compact-ff">
+            <div class="chart-card">
+              <div class="chart-title">
+                <h3>Ageing Buckets Breakdown</h3>
+                <p>Month-wise 1-2 Days vs 2+ Days %</p>
+              </div>
+              <div class="chart-container-bar" style="height: 140px;">
+                <canvas id="chart-ff-buckets"></canvas>
+              </div>
             </div>
-          </section>
+
+            <div class="chart-card">
+              <div class="chart-title">
+                <h3>Payable vs Recovery split</h3>
+                <p>Percentage split of F&F payout types</p>
+              </div>
+              <div class="chart-container-doughnut">
+                <canvas id="chart-ff-payment-type"></canvas>
+              </div>
+            </div>
+
+            <div class="chart-card">
+              <div class="chart-title">
+                <h3>NDC Clearance SLA</h3>
+                <p>On-Time vs Delayed clearance % by Dept</p>
+              </div>
+              <div class="chart-container-bar" style="height: 140px;">
+                <canvas id="chart-ff-ndc-clearance"></canvas>
+              </div>
+            </div>
+          </div>
+
+        </div>
+
+        <!-- Sidebar: Critical Insights Column -->
+        <aside class="dashboard-insights-sidebar">
+          <div class="insights-header">
+            <h3>Critical AI Insights</h3>
+          </div>
+          <div class="insights-list">
+            <div class="insight-item">
+              <div class="insight-badge">1</div>
+              <div class="insight-text">
+                <h4>Finance Clearance Bottlenecks</h4>
+                <p>Finance clearances account for 74% of pending cases, taking an average of 14 days to resolve compared
+                  to IT Asset returns (2 days).</p>
+              </div>
+            </div>
+            <div class="insight-item">
+              <div class="insight-badge">2</div>
+              <div class="insight-text">
+                <h4>Unrecovered Balances Alert</h4>
+                <p>Pharmacy Supply Chain has the highest unrecovered amount of ₹1.8 Lakhs across 8 open cases. Focus
+                  recovery follow-ups here.</p>
+              </div>
+            </div>
+            <div class="insight-item">
+              <div class="insight-badge">3</div>
+              <div class="insight-text">
+                <h4>Payable F&F Settled TAT</h4>
+                <p>Average settlement TAT has reduced by 3 days in June after IT automatic clearance rules were
+                  implemented.</p>
+              </div>
+            </div>
+          </div>
+        </aside>
+
+        <!-- Tables Side-by-Side Row -->
+        <div class="tables-row-compact-ff">
+          <!-- Left Table: Total F&F Payout by P&L -->
+          <div class="table-col-left">
+            <div class="chart-card compact-table-card">
+              <div class="chart-title">
+                <h3>Total F&F Payout by P&L</h3>
+                <p>Settlement payouts (in ₹) in descending order</p>
+              </div>
+              <div class="compact-table-container">
+                <table id="table-ff-payout-pl" class="compact-data-table">
+                  <thead>
+                    <tr>
+                      <th>P&L Name</th>
+                      <th class="align-right">Headcount</th>
+                      <th class="align-right">Total Payout</th>
+                    </tr>
+                  </thead>
+                  <tbody id="tbody-ff-payout-pl">
+                    <!-- JS-injected rows -->
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+
+          <!-- Right Table: Recovery & Settlement Analysis by P&L Table -->
+          <div class="table-col-right">
+            <section class="table-section" aria-label="Recovery Analysis">
+              <div class="table-header-row">
+                <div class="table-title">
+                  <h2>Recovery & Settlement Analysis by P&L Home</h2>
+                </div>
+                <div class="table-search-box">
+                  <svg class="search-icon" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"
+                    stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                      d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                  </svg>
+                  <input type="text" id="search-recovery-table" class="search-input"
+                    placeholder="Search recovery table...">
+                </div>
+              </div>
+
+              <div class="table-container">
+                <table id="table-ff-recovery-analysis">
+                  <thead>
+                    <tr>
+                      <th class="sortable" data-sort="plName">Department</th>
+                      <th class="sortable align-right" data-sort="recoveredHeadcount">Recovered HC</th>
+                      <th class="sortable align-right" data-sort="totalRecovered">Amt Recovered (₹)</th>
+                      <th class="sortable align-right" data-sort="unrecoveredHeadcount">Unrecovered HC</th>
+                      <th class="sortable align-right" data-sort="totalUnrecovered">Unrecovered Amt (₹)</th>
+                    </tr>
+                  </thead>
+                  <tbody id="tbody-ff-recovery-analysis">
+                    <!-- JS-injected rows -->
+                  </tbody>
+                </table>
+              </div>
+              <div class="table-footer">
+                <span id="lbl-recovery-table-count">Showing 0 rows</span>
+              </div>
+            </section>
+          </div>
         </div>
       </div>
-
     </section>
 
     <!-- CONTENT VIEW 2: ATTRITION ANALYSIS -->
     <section id="view-attrition" class="dashboard-view" role="tabpanel" aria-labelledby="tab-attrition">
-      <!-- KPI Metrics Card Grid -->
-      <div class="kpi-grid kpi-grid-compact-attrition">
-        <div class="kpi-card">
-          <div class="kpi-header">
-            <h3>Total Exits</h3>
-            <span class="kpi-badge neutral">Exits</span>
-          </div>
-          <p id="kpi-attrition-total" class="kpi-value">0</p>
-          <p class="kpi-subtitle">Exited employees in selected range</p>
-        </div>
-
-        <div class="kpi-card">
-          <div class="kpi-header">
-            <h3>Attrition Rate</h3>
-            <span class="kpi-badge info">Calculated</span>
-          </div>
-          <p id="kpi-attrition-rate" class="kpi-value">0.0%</p>
-          <p class="kpi-subtitle">Exits relative to total active count</p>
-        </div>
-
-        <div class="kpi-card">
-          <div class="kpi-header">
-            <h3>Dropout Cases</h3>
-            <span id="kpi-attrition-dropout-badge" class="kpi-badge danger">Tenure &lt; 90d</span>
-          </div>
-          <p id="kpi-attrition-dropout" class="kpi-value">0 (0.0%)</p>
-          <p class="kpi-subtitle">Early exits of total exiting staff</p>
-        </div>
-      </div>
-
-      <!-- Attrition Charts Grid -->
-      <div class="charts-row-compact-attrition">
-        <div class="chart-card">
-          <div class="chart-title">
-            <h3>Voluntary vs Involuntary</h3>
-            <p>Breakdown of exit decision types</p>
-          </div>
-          <div class="chart-container-doughnut">
-            <canvas id="chart-attrition-voluntary"></canvas>
-          </div>
-        </div>
-
-        <div class="chart-card">
-          <div class="chart-title">
-            <h3>Tenure Distribution</h3>
-            <p>Exited employees service length</p>
-          </div>
-          <div class="chart-container-doughnut">
-            <canvas id="chart-attrition-tenure"></canvas>
-          </div>
-        </div>
-
-        <div class="chart-card">
-          <div class="chart-title">
-            <h3>Attrition by HRBP</h3>
-            <p>Exits distribution & voluntary classification</p>
-          </div>
-          <div class="chart-container-bar">
-            <canvas id="chart-attrition-pl"></canvas>
-          </div>
-        </div>
-      </div>
-
-      <!-- Tables Side-by-Side Row -->
-      <div class="tables-row-compact-attrition">
-        <!-- Left Column: Employee Type and Reasons stacked -->
-        <div class="table-col-left">
-          <!-- Attrition by Employee Type -->
-          <div class="chart-card" style="margin-bottom: 0.4rem !important; padding: 0.5rem 0.75rem !important;">
-            <div class="chart-title" style="margin-bottom: 0.4rem !important;">
-              <h3 style="font-size: 0.813rem !important; margin: 0; font-weight: 600; color: var(--color-text-title);">Attrition by Employee Type</h3>
-            </div>
-            <div id="tbody-attrition-type" style="display: flex; gap: 0.5rem; width: 100%;">
-              <!-- JS-injected horizontal cards -->
-            </div>
-          </div>
-
-          <!-- Top Exit Reasons -->
-          <section class="table-section" id="reasons-summary-section" style="padding: 0.4rem 0.6rem; flex: 1;">
-            <div class="table-header-row" style="padding: 0 0 0.25rem 0 !important; border-bottom: 1px solid var(--color-border) !important; margin-bottom: 0.4rem; justify-content: space-between; flex-wrap: nowrap; gap: 0.5rem;">
-              <div class="table-title">
-                <h2 style="font-size: 0.813rem !important; margin: 0;">Top Exit Reasons by P&L Home</h2>
+      <div class="dashboard-layout-grid">
+        <div class="dashboard-main-area">
+          <!-- KPI Metrics Card Grid -->
+          <div class="kpi-grid kpi-grid-compact-attrition">
+            <div class="kpi-card">
+              <div class="kpi-header">
+                <h3>Total Exits</h3>
+                <span class="kpi-badge neutral">Exits</span>
               </div>
-              <div class="filter-group" style="min-width: 140px; flex: 0; gap: 0.1rem; flex-direction: row; align-items: center;">
-                <select id="reasons-pl-select" class="filter-select" style="font-size: 0.75rem; padding: 0.15rem 1.25rem 0.15rem 0.4rem; height: 24px; margin: 0;">
-                  <option value="All">All Departments</option>
-                </select>
+              <p id="kpi-attrition-total" class="kpi-value">0</p>
+              <p class="kpi-subtitle">Exited employees in selected range</p>
+            </div>
+
+            <div class="kpi-card">
+              <div class="kpi-header">
+                <h3>Attrition Rate</h3>
+                <span class="kpi-badge info">Calculated</span>
+              </div>
+              <p id="kpi-attrition-rate" class="kpi-value">0.0%</p>
+              <p class="kpi-subtitle">Exits relative to total active count</p>
+            </div>
+
+
+          </div>
+
+          <!-- Attrition Charts Grid -->
+          <div class="charts-row-compact-attrition">
+            <div class="chart-card">
+              <div class="chart-title">
+                <h3>Voluntary vs Involuntary</h3>
+                <p>Breakdown of exit decision types</p>
+              </div>
+              <div class="chart-container-doughnut">
+                <canvas id="chart-attrition-voluntary"></canvas>
               </div>
             </div>
 
-            <div class="reasons-grid" style="display: grid; grid-template-columns: 1fr 1fr; gap: 0.5rem; overflow-y: auto; flex: 1; min-height: 0;">
-              <div class="reason-column">
-                <h3 style="color: var(--status-success-text); font-size: 0.813rem; margin-bottom: 0.45rem; display: flex; align-items: center; gap: 0.25rem; font-weight:600;">
-                  <span style="width: 5px; height: 5px; background: var(--status-success-text); border-radius: 50%;"></span>
-                  Voluntary Exit Reasons
-                </h3>
-                <div id="voluntary-reasons-list" class="reasons-list">
-                  <!-- JS-injected list -->
+            <div class="chart-card">
+              <div class="chart-title">
+                <h3>Tenure Distribution</h3>
+                <p>Exited employees service length</p>
+              </div>
+              <div class="chart-container-doughnut">
+                <canvas id="chart-attrition-tenure"></canvas>
+              </div>
+            </div>
+
+            <div class="chart-card">
+              <div class="chart-title">
+                <h3>Attrition by HRBP</h3>
+                <p>Exits distribution & voluntary classification</p>
+              </div>
+              <div class="chart-container-bar">
+                <canvas id="chart-attrition-pl"></canvas>
+              </div>
+            </div>
+          </div>
+
+          <!-- Demographics & Grade Breakdown -->
+          <div class="demographics-row-compact-attrition"
+            style="display: grid; grid-template-columns: 1.2fr 1fr; gap: 0.5rem; margin-bottom: 0.5rem;">
+            <!-- Left Card: Region and Gender charts side by side -->
+            <div class="chart-card"
+              style="display: grid; grid-template-columns: 1fr 1fr; gap: 0.5rem; padding: 0.5rem 0.75rem;">
+              <div>
+                <div class="chart-title">
+                  <h3>Region-wise Attrition</h3>
+                  <p>Exits distribution by region</p>
+                </div>
+                <div class="chart-container-doughnut" style="height: 140px; position: relative;">
+                  <canvas id="chart-attrition-region"></canvas>
                 </div>
               </div>
-
-              <div class="reason-column">
-                <h3 style="color: var(--status-danger-text); font-size: 0.813rem; margin-bottom: 0.45rem; display: flex; align-items: center; gap: 0.25rem; font-weight:600;">
-                  <span style="width: 5px; height: 5px; background: var(--status-danger-text); border-radius: 50%;"></span>
-                  Involuntary Exit Reasons
-                </h3>
-                <div id="involuntary-reasons-list" class="reasons-list">
-                  <!-- JS-injected list -->
+              <div>
+                <div class="chart-title">
+                  <h3>Gender-wise Exit</h3>
+                  <p>Exits split by gender</p>
                 </div>
-              </div>
-            </div>
-          </section>
-        </div>
-
-        <!-- Right Column: Month-on-Month Exits table -->
-        <div class="table-col-right">
-          <section class="table-section scrollable" aria-label="MoM Exit Registry">
-            <div class="table-header-row">
-              <div class="table-title">
-                <h2>Month-on-Month Exits by Department</h2>
-              </div>
-              <div style="display: flex; gap: 0.35rem; align-items: center;">
-                <select id="select-mom-year" class="filter-select" style="padding: 0.15rem 1.25rem 0.15rem 0.4rem; font-size: 0.75rem; border-radius: 4px; width: 95px; height: 26px; margin: 0;">
-                  <option value="All">All Years</option>
-                  <option value="2025">2025</option>
-                  <option value="2026">2026</option>
-                </select>
-                <select id="select-mom-month" class="filter-select" style="padding: 0.15rem 1.25rem 0.15rem 0.4rem; font-size: 0.75rem; border-radius: 4px; width: 105px; height: 26px; margin: 0;">
-                  <option value="All">All Months</option>
-                </select>
-                <div class="table-search-box" style="margin: 0; min-width: 120px; position: relative;">
-                  <input type="text" id="search-mom-table" class="search-input" placeholder="Search MoM..." style="padding: 0.15rem 0.5rem 0.15rem 1.75rem; font-size: 0.75rem; height: 26px; width: 100%; border: 1px solid var(--color-border); border-radius: var(--radius-sm);">
-                  <svg class="search-icon" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" style="width: 12px; height: 12px; position: absolute; left: 0.5rem; top: 50%; transform: translateY(-50%); color: var(--color-text-muted);">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-                  </svg>
+                <div class="chart-container-doughnut" style="height: 140px; position: relative;">
+                  <canvas id="chart-attrition-gender"></canvas>
                 </div>
               </div>
             </div>
 
-            <div class="table-container">
-              <table id="table-attrition-mom">
+            <!-- Right Card: Grade-wise Attrition & Top Attrition Reasons side-by-side tables -->
+            <div class="chart-card"
+              style="display: grid; grid-template-columns: 1fr 1.2fr; gap: 0.5rem; padding: 0.5rem 0.75rem; overflow: hidden;">
+              <div>
+                <div class="chart-title">
+                  <h3>Grade-wise Attrition</h3>
+                  <p>Exits & % of total exits</p>
+                </div>
+                <div class="compact-table-container" style="max-height: 140px; overflow-y: auto;">
+                  <table class="compact-data-table" style="font-size: 0.72rem; width: 100%;">
+                    <thead>
+                      <tr>
+                        <th>Grade</th>
+                        <th class="align-right">Count</th>
+                        <th class="align-right">%</th>
+                      </tr>
+                    </thead>
+                    <tbody id="tbody-attrition-grade">
+                      <!-- JS-injected rows -->
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+              <div>
+                <div class="chart-title">
+                  <h3>Top Attrition Reasons</h3>
+                  <p>All exit reasons adding to 100%</p>
+                </div>
+                <div class="compact-table-container" style="max-height: 140px; overflow-y: auto;">
+                  <table class="compact-data-table" style="font-size: 0.72rem; width: 100%;">
+                    <thead>
+                      <tr>
+                        <th>Reason</th>
+                        <th class="align-right">Count</th>
+                        <th class="align-right">%</th>
+                      </tr>
+                    </thead>
+                    <tbody id="tbody-attrition-reasons-total">
+                      <!-- JS-injected rows -->
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Tables Side-by-Side Row -->
+          <div class="tables-row-compact-attrition">
+            <!-- Left Column: Employee Type and Reasons stacked -->
+            <div class="table-col-left">
+              <!-- Attrition by Employee Type -->
+              <div class="chart-card" style="margin-bottom: 0.4rem !important; padding: 0.5rem 0.75rem !important;">
+                <div class="chart-title" style="margin-bottom: 0.4rem !important;">
+                  <h3
+                    style="font-size: 0.813rem !important; margin: 0; font-weight: 600; color: var(--color-text-title);">
+                    Attrition by Employee Type</h3>
+                </div>
+                <div id="tbody-attrition-type" style="display: flex; gap: 0.5rem; width: 100%;">
+                  <!-- JS-injected horizontal cards -->
+                </div>
+              </div>
+
+              <!-- Top Exit Reasons -->
+              <section class="table-section" id="reasons-summary-section"
+                style="padding: 0.4rem 0.6rem; flex: 1; display: flex; flex-direction: column;">
+                <div class="table-header-row"
+                  style="padding: 0 0 0.25rem 0 !important; border-bottom: 1px solid var(--color-border) !important; margin-bottom: 0.4rem; justify-content: space-between; flex-wrap: nowrap; gap: 0.5rem; width: 100%;">
+                  <div class="table-title" style="display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap;">
+                    <h2 style="font-size: 0.813rem !important; margin: 0; white-space: nowrap;">Top Exit Reasons</h2>
+                    <!-- Tabs -->
+                    <div class="reasons-tabs"
+                      style="display: flex; gap: 0.15rem; background: var(--color-bg-card-hover); padding: 2px; border-radius: var(--radius-sm); border: 1px solid var(--color-border);">
+                      <button class="reasons-tab-btn active" data-tab="voluntary"
+                        style="font-size: 0.688rem; padding: 0.1rem 0.35rem; background: var(--color-blue-light); border: none; color: var(--color-blue-accent); border-radius: 2px; cursor: pointer; font-weight: 600;">Voluntary</button>
+                      <button class="reasons-tab-btn" data-tab="involuntary"
+                        style="font-size: 0.688rem; padding: 0.1rem 0.35rem; background: transparent; border: none; color: var(--color-text-muted); border-radius: 2px; cursor: pointer; font-weight: 500;">Involuntary</button>
+                      <button class="reasons-tab-btn" data-tab="dropout"
+                        style="font-size: 0.688rem; padding: 0.1rem 0.35rem; background: transparent; border: none; color: var(--color-text-muted); border-radius: 2px; cursor: pointer; font-weight: 500;">Dropout</button>
+                    </div>
+                  </div>
+                  <div class="filter-group"
+                    style="min-width: 110px; flex: 0; gap: 0.1rem; flex-direction: row; align-items: center;">
+                    <select id="reasons-pl-select" class="filter-select"
+                      style="font-size: 0.75rem; padding: 0.15rem 1.25rem 0.15rem 0.4rem; height: 24px; margin: 0; width: 100%;">
+                      <option value="All">All P&L</option>
+                    </select>
+                  </div>
+                </div>
+
+                <!-- Single container for active list -->
+                <div id="reasons-list-container" class="reasons-list" style="overflow-y: auto; flex: 1; min-height: 0;">
+                  <!-- JS-injected reasons -->
+                </div>
+              </section>
+            </div>
+
+            <!-- Right Column: Attrition Rate by Month table -->
+            <div class="table-col-right">
+              <section class="table-section" id="attrition-rate-monthly-section"
+                style="padding: 0.4rem 0.6rem; flex: 1; display: flex; flex-direction: column; height: 100%;">
+                <div class="table-header-row"
+                  style="padding: 0 0 0.25rem 0 !important; border-bottom: 1px solid var(--color-border) !important; margin-bottom: 0.4rem; justify-content: space-between; flex-wrap: nowrap; gap: 0.5rem; width: 100%;">
+                  <div class="table-title">
+                    <h2 style="font-size: 0.813rem !important; margin: 0;">Attrition Rate by Month</h2>
+                  </div>
+                </div>
+                <div class="table-container" style="max-height: 180px; overflow-y: auto; flex: 1;">
+                  <table class="compact-data-table" id="table-attrition-monthly-rate"
+                    style="font-size: 0.72rem; width: 100%;">
+                    <thead>
+                      <tr>
+                        <th>Month</th>
+                        <th class="align-right">Active Count (Start)</th>
+                        <th class="align-right">Exit Count</th>
+                        <th class="align-right">Attrition Rate (%)</th>
+                      </tr>
+                    </thead>
+                    <tbody id="tbody-attrition-monthly-rate">
+                      <!-- JS-injected rows -->
+                    </tbody>
+                  </table>
+                </div>
+              </section>
+            </div>
+          </div>
+
+          <!-- Employee Type Exit Distribution by Month Table Section -->
+          <section class="table-section" id="employee-type-exits-section"
+            style="padding: 0.4rem 0.6rem; margin-top: 0.5rem; display: flex; flex-direction: column; width: 100%;">
+            <div class="table-header-row"
+              style="padding: 0 0 0.25rem 0 !important; border-bottom: 1px solid var(--color-border) !important; margin-bottom: 0.4rem; justify-content: space-between; flex-wrap: nowrap; gap: 0.5rem; width: 100%;">
+              <div class="table-title" style="display: flex; gap: 0.75rem; align-items: center;">
+                <h2 style="font-size: 0.813rem !important; margin: 0; white-space: nowrap;">Employee Type Exits by Month
+                </h2>
+                <!-- Tabs/Toggles -->
+                <div class="employee-exits-tabs"
+                  style="display: flex; gap: 0.15rem; background: var(--color-bg-card-hover); padding: 2px; border-radius: var(--radius-sm); border: 1px solid var(--color-border);">
+                  <button class="emp-exits-tab-btn active" data-type="combined"
+                    style="font-size: 0.688rem; padding: 0.1rem 0.35rem; background: var(--color-blue-light); border: none; color: var(--color-blue-accent); border-radius: 2px; cursor: pointer; font-weight: 600;">Combined</button>
+                  <button class="emp-exits-tab-btn" data-type="voluntary"
+                    style="font-size: 0.688rem; padding: 0.1rem 0.35rem; background: transparent; border: none; color: var(--color-text-muted); border-radius: 2px; cursor: pointer; font-weight: 500;">Voluntary
+                    Only</button>
+                  <button class="emp-exits-tab-btn" data-type="involuntary"
+                    style="font-size: 0.688rem; padding: 0.1rem 0.35rem; background: transparent; border: none; color: var(--color-text-muted); border-radius: 2px; cursor: pointer; font-weight: 500;">Involuntary
+                    Only</button>
+                </div>
+              </div>
+            </div>
+            <div class="table-container" style="overflow-x: auto;">
+              <table class="compact-data-table" id="table-emp-type-monthly-exits"
+                style="font-size: 0.72rem; width: 100%; min-width: 500px;">
                 <thead>
-                  <tr>
-                    <th class="sortable" data-sort="plName">Department (P&L)</th>
-                    <th class="sortable" data-sort="month">Month</th>
-                    <th class="sortable align-right" data-sort="count">Exit Count</th>
-                    <th class="sortable align-right" data-sort="percent">% of Month Exits</th>
+                  <tr id="thead-row-emp-type-exits">
+                    <!-- Dynamic column headers (Employee Type, Month 1, Month 2, ..., Total) -->
                   </tr>
                 </thead>
-                <tbody id="tbody-attrition-mom">
-                  <!-- JS-injected rows -->
+                <tbody id="tbody-emp-type-monthly-exits">
+                  <!-- Dynamic rows (Onroll, Consultant, Intern, Total) -->
                 </tbody>
               </table>
             </div>
-            <div class="table-footer">
-              <span id="lbl-attrition-mom-count">Showing 0 rows</span>
-            </div>
           </section>
         </div>
+
+        <!-- Sidebar: Critical Insights Column -->
+        <aside class="dashboard-insights-sidebar">
+          <div class="insights-header">
+            <h3>Critical AI Insights</h3>
+          </div>
+          <div class="insights-list">
+            <div class="insight-item">
+              <div class="insight-badge">1</div>
+              <div class="insight-text">
+                <h4>FTE Attrition Spiked in May</h4>
+                <p>Full-time employee exits rose by 35% in May, primarily driven by annual appraisal cycle feedback and
+                  market compensation adjustments.</p>
+              </div>
+            </div>
+            <div class="insight-item">
+              <div class="insight-badge">2</div>
+              <div class="insight-text">
+                <h4>Consultant Attrition Stabilized</h4>
+                <p>Contractual and consultant exits remained flat month-on-month, showing healthy alignment with project
+                  completion timelines.</p>
+              </div>
+            </div>
+            <div class="insight-item">
+              <div class="insight-badge">3</div>
+              <div class="insight-text">
+                <h4>Grade 1 & Northern Focus Needed</h4>
+                <p>Region North and Grade 1 staff accounted for 42% of total attrition. Recommended action: review
+                  supervisor-level feedback in these clusters.</p>
+              </div>
+            </div>
+          </div>
+        </aside>
       </div>
     </section>
 
@@ -565,44 +748,159 @@
       </div>
 
       <div class="modal-body">
-        <p class="modal-desc">
-          Upload new F&F and Attrition logs to update the metrics and charts in real-time.
-          The dashboard expects either CSV or JSON formatted files matching the standard schemas.
-        </p>
-
-        <!-- Drag and Drop Zone -->
-        <div id="drop-zone" class="drop-zone">
-          <svg class="drop-icon" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"
-            stroke="currentColor">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-              d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
-          </svg>
-          <p class="drop-primary-text">Drag and drop file here, or <span class="browse-link">browse files</span></p>
-          <p class="drop-sub-text">Supports Excel (.xlsx), CSV or JSON (Max size 10MB)</p>
-          <input type="file" id="file-input" accept=".xlsx,.csv,.json" class="hidden">
+        <!-- Sync Method Tabs -->
+        <div class="modal-tabs"
+          style="display: flex; border-bottom: 1px solid var(--color-border); margin-bottom: 1.25rem;">
+          <button id="modal-tab-file" class="modal-tab-btn active"
+            style="flex: 1; padding: 0.75rem; background: none; border: none; border-bottom: 2px solid var(--color-blue-accent); font-weight: 600; cursor: pointer; color: var(--color-blue-accent); font-size: 0.875rem;">
+            File Upload
+          </button>
+          <button id="modal-tab-sheets" class="modal-tab-btn"
+            style="flex: 1; padding: 0.75rem; background: none; border: none; border-bottom: 2px solid transparent; font-weight: 500; cursor: pointer; color: var(--color-text-muted); font-size: 0.875rem;">
+            Google Sheets Sync
+          </button>
         </div>
 
-        <div id="upload-feedback" class="feedback-alert hidden">
-          <span id="feedback-icon" class="feedback-icon"></span>
-          <span id="feedback-text" class="feedback-text">Success message goes here</span>
+        <!-- Panel 1: File Upload -->
+        <div id="modal-panel-file" style="display: flex; flex-direction: column; gap: 1.25rem;">
+          <p class="modal-desc">
+            Upload new F&F and Attrition logs to update the metrics and charts in real-time.
+            The dashboard expects either CSV or JSON formatted files matching the standard schemas.
+          </p>
+
+          <!-- Drag and Drop Zone -->
+          <div id="drop-zone" class="drop-zone">
+            <svg class="drop-icon" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"
+              stroke="currentColor">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
+            </svg>
+            <p class="drop-primary-text">Drag and drop file here, or <span class="browse-link">browse files</span></p>
+            <p class="drop-sub-text">Supports Excel (.xlsx), CSV or JSON (Max size 10MB)</p>
+            <input type="file" id="file-input" accept=".xlsx,.csv,.json" class="hidden">
+          </div>
+
+          <div id="upload-feedback" class="feedback-alert hidden">
+            <span id="feedback-icon" class="feedback-icon"></span>
+            <span id="feedback-text" class="feedback-text">Success message goes here</span>
+          </div>
+
+          <div class="modal-sections">
+            <div class="modal-section-info">
+              <h3>Format Guidelines</h3>
+              <p>Ensure file columns or object properties match these exact names:</p>
+              <ul>
+                <li><strong>F&F File columns:</strong> <code>employeeId</code>, <code>name</code>,
+                  <code>employeeType</code>, <code>hrbpLead</code>, <code>plName</code>, <code>month</code>,
+                  <code>lastWorkingDay</code>, <code>clearanceStatus</code>, <code>settlementAmount</code>,
+                  <code>payoutDate</code>
+                </li>
+                <li><strong>Attrition File columns:</strong> <code>employeeId</code>, <code>name</code>,
+                  <code>employeeType</code>, <code>hrbpLead</code>, <code>plName</code>, <code>month</code>,
+                  <code>exitDate</code>, <code>exitType</code>, <code>reasonForLeaving</code>,
+                  <code>tenureMonths</code>,
+                  <code>isRegrettable</code>
+                </li>
+              </ul>
+            </div>
+          </div>
         </div>
 
-        <div class="modal-sections">
-          <div class="modal-section-info">
-            <h3>Format Guidelines</h3>
-            <p>Ensure file columns or object properties match these exact names:</p>
-            <ul>
-              <li><strong>F&F File columns:</strong> <code>employeeId</code>, <code>name</code>,
-                <code>employeeType</code>, <code>hrbpLead</code>, <code>plName</code>, <code>month</code>,
-                <code>lastWorkingDay</code>, <code>clearanceStatus</code>, <code>settlementAmount</code>,
-                <code>payoutDate</code>
-              </li>
-              <li><strong>Attrition File columns:</strong> <code>employeeId</code>, <code>name</code>,
-                <code>employeeType</code>, <code>hrbpLead</code>, <code>plName</code>, <code>month</code>,
-                <code>exitDate</code>, <code>exitType</code>, <code>reasonForLeaving</code>, <code>tenureMonths</code>,
-                <code>isRegrettable</code>
-              </li>
-            </ul>
+        <!-- Panel 2: Google Sheets Sync -->
+        <div id="modal-panel-sheets" class="hidden" style="display: flex; flex-direction: column; gap: 1.25rem;">
+          <p class="modal-desc">
+            Connect your dashboard directly to a Google Spreadsheet. You can enable automatic syncing to refresh data in
+            real-time.
+          </p>
+
+          <!-- Enable Sync Toggle -->
+          <div
+            style="display: flex; align-items: center; justify-content: space-between; background: var(--color-blue-light); padding: 0.75rem 1rem; border-radius: var(--radius-md); border: 1px solid var(--color-blue-border);">
+            <div style="display: flex; flex-direction: column;">
+              <span style="font-size: 0.875rem; font-weight: 600; color: var(--color-blue-primary);">Enable Google
+                Sheets Sync</span>
+              <span style="font-size: 0.75rem; color: var(--color-text-muted);">Automatically load data from Sheets
+                source</span>
+            </div>
+            <label class="switch">
+              <input type="checkbox" id="sheet-sync-enabled">
+              <span class="slider"></span>
+            </label>
+          </div>
+
+          <!-- Method Selection -->
+          <div class="filter-group" style="min-width: 100%;">
+            <label for="sheet-sync-method"
+              style="font-size: 0.688rem; font-weight: 600; color: var(--color-text-muted); text-transform: uppercase;">Connection
+              Method</label>
+            <select id="sheet-sync-method" class="filter-select"
+              style="margin-top: 0.25rem; background-color: #ffffff;">
+              <option value="published">Option A: Published Google Sheet URL (Recommended - No API Key Needed)</option>
+              <option value="api">Option B: Google Sheets API v4 (Requires API Key)</option>
+            </select>
+          </div>
+
+          <!-- API Method Fields -->
+          <div id="sheet-api-fields" class="hidden" style="display: flex; flex-direction: column; gap: 0.75rem;">
+            <div class="filter-group" style="min-width: 100%;">
+              <label for="sheet-api-key"
+                style="font-size: 0.688rem; font-weight: 600; color: var(--color-text-muted); text-transform: uppercase;">Google
+                API Key</label>
+              <input type="password" id="sheet-api-key" class="search-input" placeholder="AIzaSy..."
+                style="padding: 0.4rem 0.625rem; font-size: 0.813rem; border-radius: var(--radius-sm); margin-top: 0.25rem;">
+            </div>
+            <div class="filter-group" style="min-width: 100%;">
+              <label for="sheet-spreadsheet-id"
+                style="font-size: 0.688rem; font-weight: 600; color: var(--color-text-muted); text-transform: uppercase;">Spreadsheet
+                ID</label>
+              <input type="text" id="sheet-spreadsheet-id" class="search-input" placeholder="e.g. 1a2b3c4d5e..."
+                style="padding: 0.4rem 0.625rem; font-size: 0.813rem; border-radius: var(--radius-sm); margin-top: 0.25rem;">
+            </div>
+            <div class="filter-group" style="min-width: 100%;">
+              <label for="sheet-range"
+                style="font-size: 0.688rem; font-weight: 600; color: var(--color-text-muted); text-transform: uppercase;">Sheet
+                Name (Tab Name)</label>
+              <input type="text" id="sheet-range" class="search-input" placeholder="e.g. Sheet1" value="Sheet1"
+                style="padding: 0.4rem 0.625rem; font-size: 0.813rem; border-radius: var(--radius-sm); margin-top: 0.25rem;">
+            </div>
+          </div>
+
+          <!-- Published URL Fields -->
+          <div id="sheet-published-fields" style="display: flex; flex-direction: column; gap: 0.75rem;">
+            <div class="filter-group" style="min-width: 100%;">
+              <label for="sheet-published-url"
+                style="font-size: 0.688rem; font-weight: 600; color: var(--color-text-muted); text-transform: uppercase;">Published
+                Excel URL (.xlsx)</label>
+              <input type="text" id="sheet-published-url" class="search-input"
+                placeholder="https://docs.google.com/spreadsheets/d/e/.../pub?output=xlsx"
+                style="padding: 0.4rem 0.625rem; font-size: 0.813rem; border-radius: var(--radius-sm); margin-top: 0.25rem;">
+              <p style="font-size: 0.688rem; color: var(--color-text-muted); margin-top: 0.25rem;">
+                To generate this: In your Google Sheet, click <strong>File -> Share -> Publish to Web</strong>. Under
+                'Link', select <strong>Entire Document</strong> (or the specific sheet) and <strong>Microsoft Excel
+                  (.xlsx)</strong> format, then copy/paste the link here.
+              </p>
+            </div>
+          </div>
+
+          <!-- Auto-Sync Interval -->
+          <div class="filter-group" style="min-width: 100%;">
+            <label for="sheet-sync-interval"
+              style="font-size: 0.688rem; font-weight: 600; color: var(--color-text-muted); text-transform: uppercase;">Sync
+              Interval (Minutes)</label>
+            <input type="number" id="sheet-sync-interval" class="search-input" value="1" min="1" max="60"
+              style="padding: 0.4rem 0.625rem; font-size: 0.813rem; border-radius: var(--radius-sm); margin-top: 0.25rem;">
+          </div>
+
+          <div id="sheets-sync-feedback" class="feedback-alert hidden">
+            <span id="sheets-feedback-icon" class="feedback-icon"></span>
+            <span id="sheets-feedback-text" class="feedback-text">Success message goes here</span>
+          </div>
+
+          <!-- Action buttons for Sheets Panel -->
+          <div style="display: flex; justify-content: flex-end; gap: 0.75rem; margin-top: 0.5rem;">
+            <button id="btn-save-sheets-config" class="btn btn-primary" style="padding: 0.5rem 1rem;">
+              Save & Sync
+            </button>
           </div>
         </div>
       </div>
@@ -686,7 +984,7 @@
   </div>
 
   <!-- Main JavaScript App Controller -->
-  <script src="app.js?v=37"></script>
+  <script src="app.js?v=46"></script>
 </body>
 
 </html>
