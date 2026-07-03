@@ -450,6 +450,8 @@ function normalizeExcelRows(rows) {
             plName: plName,
             month: monthName,
             lastWorkingDay: dol ? formatDateString(dol) : '',
+            resignationDate: dor ? formatDateString(dor) : '',
+            closureDate: closureDate ? formatDateString(closureDate) : '',
             clearanceStatus: clearanceStatus,
             settlementAmount: finalAmountAE,
             ffAmountAA: ffAmountAA,
@@ -484,6 +486,8 @@ function normalizeExcelRows(rows) {
             plName: plName,
             month: monthName,
             exitDate: dol ? formatDateString(dol) : '',
+            resignationDate: dor ? formatDateString(dor) : '',
+            closureDate: closureDate ? formatDateString(closureDate) : '',
             exitType: exitType,
             reasonForLeaving: reason,
             tenureMonths: tenureMonths,
@@ -2468,7 +2472,22 @@ function downloadPivotExcel() {
     
     // Map objects to user-friendly Excel column headers
     const exportData = currentPivotSubset.map(item => {
-        if (currentPivotIsFF) {
+        if (currentPivotChartId === 'chart-ff-ndc-clearance') {
+            // NDC Clearance SLA specific columns requested by the user
+            return {
+                'Employee Code': item.employeeId || '',
+                'Employee Name': item.name || '',
+                'Date of Resignation': item.resignationDate || '',
+                'Last Working Date': item.lastWorkingDay || '',
+                'F&F Closure Date': item.closureDate || '',
+                'Last NDC Trigger Date': item.lastNdcTriggeredDate || '',
+                'HRBP NDC Date': item.clearanceDates ? item.clearanceDates.hrbp : '',
+                'IT Clearance Date': item.clearanceDates ? item.clearanceDates.it : '',
+                'Finance Clearance Date': item.clearanceDates ? item.clearanceDates.finance : '',
+                'Admin Clearance Date': item.clearanceDates ? item.clearanceDates.admin : ''
+            };
+        } else if (currentPivotIsFF) {
+            // Standard F&F cases: include F&F Closure Date instead of Clearance Status
             return {
                 'Employee ID': item.employeeId || '',
                 'Employee Name': item.name || '',
@@ -2478,7 +2497,7 @@ function downloadPivotExcel() {
                 'P&L Name': item.plName || '',
                 'Month': item.month || '',
                 'Last Working Day': item.lastWorkingDay || '',
-                'Clearance Status': item.clearanceStatus || '',
+                'F&F Closure Date': item.closureDate || '',
                 'Payment Type': item.paymentType || '',
                 'Ageing (Days)': item.ageing || 0,
                 'F&F Amount (Column AA)': item.ffAmountAA || 0,
@@ -2511,7 +2530,7 @@ function downloadPivotExcel() {
     const worksheet = XLSX.utils.json_to_sheet(exportData);
     const workbook = XLSX.utils.book_new();
     
-    const sheetName = currentPivotIsFF ? "F&F Cases" : "Attrition Cases";
+    const sheetName = currentPivotChartId === 'chart-ff-ndc-clearance' ? "NDC Clearance Cases" : (currentPivotIsFF ? "F&F Cases" : "Attrition Cases");
     XLSX.utils.book_append_sheet(workbook, worksheet, sheetName);
     
     // Auto-fit columns
@@ -2528,8 +2547,10 @@ function downloadPivotExcel() {
 // ==========================================================================
 let currentPivotSubset = [];
 let currentPivotIsFF = false;
+let currentPivotChartId = '';
 
 function triggerPivotModal(chartId, clickedLabel, datasetLabel) {
+    currentPivotChartId = chartId;
     let subsetData = [];
     let titleContext = '';
     const isFF = chartId.startsWith('chart-ff-');
