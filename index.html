@@ -15,7 +15,7 @@
     rel="stylesheet">
 
   <!-- CSS Stylesheet -->
-  <link rel="stylesheet" href="style.css?v=48">
+  <link rel="stylesheet" href="style.css?v=49">
 
   <!-- Chart.js CDN -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
@@ -978,7 +978,15 @@
       </div>
 
       <div class="modal-footer">
-        <div class="modal-control-buttons">
+        <div class="modal-control-buttons" style="display: flex; gap: 0.75rem;">
+          <button id="btn-download-pivot-excel" class="btn btn-primary" style="display: inline-flex; align-items: center; gap: 0.5rem; font-weight: 600;">
+            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+              <polyline points="7 10 12 15 17 10"></polyline>
+              <line x1="12" y1="15" x2="12" y2="3"></line>
+            </svg>
+            Download Excel
+          </button>
           <button id="btn-close-pivot-footer" class="btn btn-secondary">Close</button>
         </div>
       </div>
@@ -986,7 +994,7 @@
   </div>
 
   <!-- Main JavaScript App Controller -->
-  <script src="app.js?v=48"></script>
+  <script src="app.js?v=49"></script>
 </body>
 
 </html>

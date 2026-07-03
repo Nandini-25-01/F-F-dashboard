@@ -787,6 +787,11 @@ function setupEventListeners() {
     document.getElementById('btn-close-pivot').addEventListener('click', closePivotModal);
     document.getElementById('btn-close-pivot-overlay').addEventListener('click', closePivotModal);
     document.getElementById('btn-close-pivot-footer').addEventListener('click', closePivotModal);
+    
+    const btnDownloadPivot = document.getElementById('btn-download-pivot-excel');
+    if (btnDownloadPivot) {
+        btnDownloadPivot.addEventListener('click', downloadPivotExcel);
+    }
 
     // Pivot dropdown change listeners
     document.getElementById('pivot-row-field').addEventListener('change', rebuildPivotTable);
@@ -2452,6 +2457,70 @@ function showToast(message, type = 'success') {
             }
         });
     }, 4000);
+}
+
+// Export drilldown records to a clean, formatted Excel file using SheetJS
+function downloadPivotExcel() {
+    if (!currentPivotSubset || currentPivotSubset.length === 0) {
+        showToast("No data to export", "warning");
+        return;
+    }
+    
+    // Map objects to user-friendly Excel column headers
+    const exportData = currentPivotSubset.map(item => {
+        if (currentPivotIsFF) {
+            return {
+                'Employee ID': item.employeeId || '',
+                'Employee Name': item.name || '',
+                'Gender': item.gender || '',
+                'Employee Type': item.employeeType || '',
+                'HRBP Lead': item.hrbpLead || '',
+                'P&L Name': item.plName || '',
+                'Month': item.month || '',
+                'Last Working Day': item.lastWorkingDay || '',
+                'Clearance Status': item.clearanceStatus || '',
+                'Payment Type': item.paymentType || '',
+                'Ageing (Days)': item.ageing || 0,
+                'F&F Amount (Column AA)': item.ffAmountAA || 0,
+                'Final F&F Amount (Column AE)': item.finalAmountAE || 0,
+                'Payout Date': item.payoutDate || '',
+                'Region': item.region || '',
+                'Grade': item.grade || ''
+            };
+        } else {
+            return {
+                'Employee ID': item.employeeId || '',
+                'Employee Name': item.name || '',
+                'Gender': item.gender || '',
+                'Employee Type': item.employeeType || '',
+                'HRBP Lead': item.hrbpLead || '',
+                'P&L Name': item.plName || '',
+                'Month': item.month || '',
+                'Date of Leaving': item.exitDate || '',
+                'Exit Type': item.exitType || '',
+                'Reason for Leaving': item.reasonForLeaving || '',
+                'Tenure (Months)': Math.round((item.tenureMonths || 0) * 10) / 10,
+                'Regrettable Attrition': item.isRegrettable ? 'Yes' : 'No',
+                'Dropout (<90 Days)': item.isDropout ? 'Yes' : 'No',
+                'Region': item.region || '',
+                'Grade': item.grade || ''
+            };
+        }
+    });
+
+    const worksheet = XLSX.utils.json_to_sheet(exportData);
+    const workbook = XLSX.utils.book_new();
+    
+    const sheetName = currentPivotIsFF ? "F&F Cases" : "Attrition Cases";
+    XLSX.utils.book_append_sheet(workbook, worksheet, sheetName);
+    
+    // Auto-fit columns
+    const max_width = exportData.reduce((w, r) => Math.max(w, Object.keys(r).length), 10);
+    worksheet["!cols"] = Array(max_width).fill({ wch: 15 });
+
+    const filename = `${sheetName.replace(" ", "_")}_Drilldown_${new Date().toISOString().substring(0,10)}.xlsx`;
+    XLSX.writeFile(workbook, filename);
+    showToast(`Successfully downloaded Excel: ${filename}`, 'success');
 }
 
 // ==========================================================================
