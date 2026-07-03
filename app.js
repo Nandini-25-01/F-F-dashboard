@@ -1,6 +1,11 @@
 // ==========================================================================
 // CORE STATE MANAGEMENT
 // ==========================================================================
+// Register Datalabels plugin globally if available
+if (typeof Chart !== 'undefined' && typeof ChartDataLabels !== 'undefined') {
+    Chart.register(ChartDataLabels);
+}
+
 const state = {
     ffData: [],
     attritionData: [],
@@ -2011,6 +2016,9 @@ const commonChartOptions = {
                 color: '#475569',
                 boxWidth: 10
             }
+        },
+        datalabels: {
+            display: false // off by default for generic charts
         }
     },
     onClick: (e, activeElements, chart) => {
@@ -2035,13 +2043,21 @@ function renderFFCharts() {
 
     // 2. Ageing Buckets (Double Bar Graph Month-wise)
     const ffIgnoringMonth = getFilteredFFIgnoringMonth();
+    const selectedMonths = state.filters.month;
+    const isAllMonths = selectedMonths.includes('All');
+
+    // Filter ageing buckets trend to show ONLY the selected month(s)
+    const displayItems = ffIgnoringMonth.filter(item => {
+        return isAllMonths || selectedMonths.includes(item.month);
+    });
+
     const monthOrder = [
         'January', 'February', 'March', 'April', 'May', 'June',
         'July', 'August', 'September', 'October', 'November', 'December'
     ];
 
     const monthGroups = {};
-    ffIgnoringMonth.forEach(item => {
+    displayItems.forEach(item => {
         const m = item.month;
         if (!m) return;
         if (!monthGroups[m]) {
@@ -2097,6 +2113,14 @@ function renderFFCharts() {
             },
             plugins: {
                 ...commonChartOptions.plugins,
+                datalabels: {
+                    display: true,
+                    anchor: 'end',
+                    align: 'top',
+                    color: '#1a1a1a',
+                    offset: 1,
+                    formatter: (value) => value > 0 ? value : ''
+                },
                 tooltip: {
                     callbacks: {
                         label: function (context) {
@@ -2178,6 +2202,13 @@ function renderFFCharts() {
             },
             plugins: {
                 ...commonChartOptions.plugins,
+                datalabels: {
+                    display: true,
+                    anchor: 'center',
+                    align: 'center',
+                    color: '#ffffff',
+                    formatter: (value) => value > 0 ? value : ''
+                },
                 tooltip: {
                     callbacks: {
                         label: function (context) {
@@ -2276,6 +2307,17 @@ function renderAttritionCharts() {
             scales: {
                 x: { stacked: false, grid: { display: false }, ticks: { font: { family: 'Figtree', size: 9 } } },
                 y: { stacked: false, grid: { color: '#f1f5f9' }, ticks: { font: { family: 'Figtree', size: 9 } } }
+            },
+            plugins: {
+                ...commonChartOptions.plugins,
+                datalabels: {
+                    display: true,
+                    anchor: 'end',
+                    align: 'top',
+                    color: '#1a1a1a',
+                    offset: 1,
+                    formatter: (value) => value > 0 ? value : ''
+                }
             }
         }
     });
@@ -2691,6 +2733,12 @@ function renderFFRecoveryAnalysisTable() {
     const recoveryCases = data.filter(d => d.paymentType === 'Recovery');
 
     const plGroups = {};
+    
+    let totalRecoveredHC = 0;
+    let totalRecoveredAmt = 0;
+    let totalUnrecoveredHC = 0;
+    let totalUnrecoveredAmt = 0;
+
     recoveryCases.forEach(item => {
         const pl = item.plName || 'Unassigned';
         if (!plGroups[pl]) {
@@ -2708,14 +2756,19 @@ function renderFFRecoveryAnalysisTable() {
         const unpaid = Math.abs(item.finalAmountAE || 0);
 
         g.totalUnrecovered += unpaid;
+        totalUnrecoveredAmt += unpaid;
         if (unpaid > 0) {
             g.unrecoveredHeadcount++;
+            totalUnrecoveredHC++;
         }
 
         const recovered = due - unpaid;
         if (recovered !== 0) {
-            g.totalRecovered += Math.max(0, recovered);
+            const recVal = Math.max(0, recovered);
+            g.totalRecovered += recVal;
+            totalRecoveredAmt += recVal;
             g.recoveredHeadcount++;
+            totalRecoveredHC++;
         }
     });
 
@@ -2755,6 +2808,20 @@ function renderFFRecoveryAnalysisTable() {
         tbody.appendChild(row);
     });
 
+    // Add sticky totals row at bottom
+    if (sorted.length > 0) {
+        const totalRow = document.createElement('tr');
+        totalRow.className = 'table-total-row';
+        totalRow.innerHTML = `
+            <td><strong>Total</strong></td>
+            <td class="align-right">${totalRecoveredHC.toLocaleString('en-IN')}</td>
+            <td class="align-right" style="color:var(--status-success-text);">₹${Math.round(totalRecoveredAmt).toLocaleString('en-IN')}</td>
+            <td class="align-right">${totalUnrecoveredHC.toLocaleString('en-IN')}</td>
+            <td class="align-right" style="color:var(--status-danger-text);">₹${Math.round(totalUnrecoveredAmt).toLocaleString('en-IN')}</td>
+        `;
+        tbody.appendChild(totalRow);
+    }
+
     const lbl = document.getElementById('lbl-recovery-table-count');
     if (lbl) {
         lbl.textContent = `Showing ${sorted.length} departments`;
@@ -2768,11 +2835,18 @@ function renderFFPayoutPLTable() {
     const data = getFilteredFF();
     const plPayouts = {};
     const plHeadcounts = {};
+    
+    let totalHeadcount = 0;
+    let totalPayout = 0;
+
     data.forEach(d => {
         if (d.paymentType === 'Payable') {
             const pl = d.plName || 'Unassigned';
             plPayouts[pl] = (plPayouts[pl] || 0) + (d.finalAmountAE || 0);
             plHeadcounts[pl] = (plHeadcounts[pl] || 0) + 1;
+            
+            totalHeadcount += 1;
+            totalPayout += (d.finalAmountAE || 0);
         }
     });
 
@@ -2790,6 +2864,18 @@ function renderFFPayoutPLTable() {
         `;
         tbody.appendChild(row);
     });
+
+    // Add sticky totals row at bottom
+    if (sortedPls.length > 0) {
+        const totalRow = document.createElement('tr');
+        totalRow.className = 'table-total-row';
+        totalRow.innerHTML = `
+            <td><strong>Total</strong></td>
+            <td class="align-right">${totalHeadcount.toLocaleString('en-IN')}</td>
+            <td class="align-right" style="color:var(--status-success-text);">₹${Math.round(totalPayout).toLocaleString('en-IN')}</td>
+        `;
+        tbody.appendChild(totalRow);
+    }
 }
 
 function renderAttritionTypeTable() {

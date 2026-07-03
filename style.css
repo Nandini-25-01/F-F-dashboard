@@ -2513,3 +2513,21 @@ input:checked+.slider:before {
     width: 100%;
   }
 }
+/* Table Total Row Styling */
+.table-total-row {
+  background-color: var(--color-blue-light) !important;
+  font-weight: bold;
+  border-top: 2px solid var(--color-blue-primary);
+  border-bottom: 2px solid var(--color-blue-primary);
+  cursor: default !important;
+}
+
+.table-total-row td {
+  border-bottom: 2px solid var(--color-blue-primary) !important;
+  font-weight: 700 !important;
+  color: inherit;
+}
+
+.table-total-row:hover {
+  background-color: var(--color-blue-light) !important;
+}
