@@ -15,7 +15,7 @@
     rel="stylesheet">
 
   <!-- CSS Stylesheet -->
-  <link rel="stylesheet" href="style.css?v=50">
+  <link rel="stylesheet" href="style.css?v=52">
 
   <!-- Chart.js CDN -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
@@ -55,13 +55,17 @@
         </div>
       </div>
 
-      <div class="sync-actions">
+      <div class="sync-actions" style="display: flex; align-items: center; gap: 0.75rem;">
         <div class="sync-status">
           <span class="status-indicator"></span>
           <span id="sync-status-text">Using demo data</span>
           <span id="auto-refresh-countdown"
             style="display:none; font-size:0.75rem; font-weight:600; color:var(--color-blue-accent); margin-left:0.25rem;"></span>
         </div>
+        <a href="https://colab.research.google.com/github/Nandini-25-01/F-F-dashboard/blob/main/sync_pipeline.ipynb" target="_blank" class="btn btn-secondary" style="display: inline-flex; align-items: center; gap: 0.5rem; text-decoration: none; font-weight: 600; font-size: 0.813rem; padding: 0.5rem 0.75rem;">
+          <img src="https://colab.research.google.com/assets/colab-badge.svg" alt="Open In Colab" style="height: 14px; width: auto;">
+          Cloud Sync
+        </a>
         <button id="btn-sync-data" class="btn btn-primary">
           <svg class="btn-icon" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"
             stroke="currentColor">
@@ -994,7 +998,7 @@
   </div>
 
   <!-- Main JavaScript App Controller -->
-  <script src="app.js?v=50"></script>
+  <script src="app.js?v=52"></script>
 </body>
 
 </html>

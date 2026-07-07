@@ -174,55 +174,35 @@ document.addEventListener('DOMContentLoaded', () => {
     setupGoogleSheetsAutoRefresh();
 });
 
-// Load data from localStorage or fetch Excel
+// Load data from pre-processed JSON or fallback to Excel
 async function loadData() {
     loadGoogleSheetsConfig();
 
-    if (state.googleSheets.enabled) {
-        updateSyncStatus('Syncing Google Sheet...');
-        const success = await syncGoogleSheetsData();
-        if (success) {
-            removeStartupOverlay();
-            return;
-        } else {
-            console.warn('Google Sheets sync failed at startup, falling back to local storage/demo...');
-        }
-    }
-
-    const localFF = localStorage.getItem('dash_ff_data');
-    const localAttr = localStorage.getItem('dash_attrition_data');
-    const localHeadcount = localStorage.getItem('dash_active_headcount');
-    const localStatus = localStorage.getItem('dash_sync_status');
-
-    if (localFF && localAttr && localHeadcount) {
-        try {
-            state.ffData = JSON.parse(localFF);
-            state.attritionData = JSON.parse(localAttr);
-            state.activeHeadcount = JSON.parse(localHeadcount);
-
-            // Force refresh from Excel if cached data doesn't have the new 'region' field
-            const hasRegion = state.attritionData.length > 0 && state.attritionData[0].hasOwnProperty('region') && state.attritionData[0].region;
-            if (!hasRegion) {
-                console.log("Cached data is outdated (missing region/grade), refreshing from Excel...");
-                localStorage.removeItem('dash_ff_data');
-                localStorage.removeItem('dash_attrition_data');
-                localStorage.removeItem('dash_active_headcount');
-                await fetchExcelData();
+    try {
+        updateSyncStatus('Loading dashboard data...');
+        const response = await fetch('dashboard_data.json');
+        if (response.ok) {
+            const data = await response.json();
+            if (data && data.ffData && data.attritionData) {
+                state.ffData = data.ffData;
+                state.attritionData = data.attritionData;
+                
+                // Track source status with sync time
+                const syncTime = data.lastSyncTime || 'Recently';
+                updateSyncStatus(`Loaded: Cloud Sync (${syncTime})`);
+                
+                populateDropdownFilters();
+                updateUI();
+                removeStartupOverlay();
                 return;
             }
-
-            updateSyncStatus(localStatus || 'Loaded from local storage');
-            populateDropdownFilters();
-            updateUI();
-            removeStartupOverlay();
-        } catch (e) {
-            console.error("Error loading cached data, clearing...", e);
-            localStorage.clear();
-            await fetchExcelData();
         }
-    } else {
-        await fetchExcelData();
+    } catch (e) {
+        console.warn('Could not load dashboard_data.json, falling back to local Excel...', e);
     }
+
+    // Always fetch fresh Excel data on startup to prevent serving stale cached records
+    await fetchExcelData();
 }
 
 // Fetch Excel Spreadsheet directly
