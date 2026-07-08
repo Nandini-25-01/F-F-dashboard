@@ -174,35 +174,55 @@ document.addEventListener('DOMContentLoaded', () => {
     setupGoogleSheetsAutoRefresh();
 });
 
-// Load data from pre-processed JSON or fallback to Excel
+// Load data from localStorage or fetch Excel
 async function loadData() {
     loadGoogleSheetsConfig();
 
-    try {
-        updateSyncStatus('Loading dashboard data...');
-        const response = await fetch('dashboard_data.json');
-        if (response.ok) {
-            const data = await response.json();
-            if (data && data.ffData && data.attritionData) {
-                state.ffData = data.ffData;
-                state.attritionData = data.attritionData;
-                
-                // Track source status with sync time
-                const syncTime = data.lastSyncTime || 'Recently';
-                updateSyncStatus(`Loaded: Cloud Sync (${syncTime})`);
-                
-                populateDropdownFilters();
-                updateUI();
-                removeStartupOverlay();
-                return;
-            }
+    if (state.googleSheets.enabled) {
+        updateSyncStatus('Syncing Google Sheet...');
+        const success = await syncGoogleSheetsData();
+        if (success) {
+            removeStartupOverlay();
+            return;
+        } else {
+            console.warn('Google Sheets sync failed at startup, falling back to local storage/demo...');
         }
-    } catch (e) {
-        console.warn('Could not load dashboard_data.json, falling back to local Excel...', e);
     }
 
-    // Always fetch fresh Excel data on startup to prevent serving stale cached records
-    await fetchExcelData();
+    const localFF = localStorage.getItem('dash_ff_data');
+    const localAttr = localStorage.getItem('dash_attrition_data');
+    const localHeadcount = localStorage.getItem('dash_active_headcount');
+    const localStatus = localStorage.getItem('dash_sync_status');
+
+    if (localFF && localAttr && localHeadcount) {
+        try {
+            state.ffData = JSON.parse(localFF);
+            state.attritionData = JSON.parse(localAttr);
+            state.activeHeadcount = JSON.parse(localHeadcount);
+
+            // Force refresh from Excel if cached data doesn't have the new 'region' field
+            const hasRegion = state.attritionData.length > 0 && state.attritionData[0].hasOwnProperty('region') && state.attritionData[0].region;
+            if (!hasRegion) {
+                console.log("Cached data is outdated (missing region/grade), refreshing from Excel...");
+                localStorage.removeItem('dash_ff_data');
+                localStorage.removeItem('dash_attrition_data');
+                localStorage.removeItem('dash_active_headcount');
+                await fetchExcelData();
+                return;
+            }
+
+            updateSyncStatus(localStatus || 'Loaded from local storage');
+            populateDropdownFilters();
+            updateUI();
+            removeStartupOverlay();
+        } catch (e) {
+            console.error("Error loading cached data, clearing...", e);
+            localStorage.clear();
+            await fetchExcelData();
+        }
+    } else {
+        await fetchExcelData();
+    }
 }
 
 // Fetch Excel Spreadsheet directly
@@ -257,6 +277,24 @@ function excelDateToDate(val) {
         const date = new Date((val - 25569) * 86400 * 1000);
         return isNaN(date.getTime()) ? null : date;
     }
+    
+    const strVal = String(val).trim();
+    if (strVal.toLowerCase() === 'nan' || strVal.toLowerCase() === 'nat' || strVal === '') {
+        return null;
+    }
+
+    // Match YYYY-MM-DD
+    let match = strVal.match(/^(\d{4})[-/](\d{2})[-/](\d{2})/);
+    if (match) {
+        return new Date(parseInt(match[1]), parseInt(match[2]) - 1, parseInt(match[3]));
+    }
+
+    // Match DD/MM/YYYY or DD-MM-YYYY
+    match = strVal.match(/^(\d{2})[-/](\d{2})[-/](\d{4})/);
+    if (match) {
+        return new Date(parseInt(match[3]), parseInt(match[2]) - 1, parseInt(match[1]));
+    }
+
     const parsed = new Date(val);
     return isNaN(parsed.getTime()) ? null : parsed;
 }
@@ -354,12 +392,13 @@ function normalizeExcelRows(rows) {
         let finalAmountAE = parseInt(String(rawAE).replace(/[^0-9.-]+/g, "")) || 0;
 
         // Ageing
-        let ageing = 0;
-        if (row['F&F Aeging'] !== undefined && row['F&F Aeging'] !== null && row['F&F Aeging'] !== '') {
-            ageing = parseInt(row['F&F Aeging']) || 0;
-        } else if (lastNdcTriggered) {
-            const end = closureDate || new Date('2026-06-16');
-            ageing = Math.max(0, Math.floor((end - lastNdcTriggered) / (1000 * 60 * 60 * 24)));
+        let ageing = null;
+        const rawAgeing = row['F&F Aeging'] !== undefined ? row['F&F Aeging'] : row['F&F Ageing'];
+        if (rawAgeing !== undefined && rawAgeing !== null && rawAgeing !== '') {
+            const parsedAgeing = parseInt(rawAgeing);
+            if (!isNaN(parsedAgeing)) {
+                ageing = parsedAgeing;
+            }
         }
 
         // Clearance Status
@@ -3161,13 +3200,34 @@ async function fetchGoogleSheetsAPI() {
 }
 
 async function fetchGoogleSheetsPublished() {
-    const { publishedUrl } = state.googleSheets;
+    let { publishedUrl } = state.googleSheets;
     if (!publishedUrl) {
-        throw new Error('Published Google Sheet URL is required.');
+        throw new Error('Published Spreadsheet URL is required.');
     }
 
-    // We can directly fetch published URLs as they support CORS
-    const response = await fetch(publishedUrl);
+    // Auto-detect standard Google Sheet URL and convert it to export link
+    const match = publishedUrl.match(/\/spreadsheets\/d\/([a-zA-Z0-9-_]+)/);
+    if (match && match[1]) {
+        const spreadsheetId = match[1];
+        publishedUrl = `https://docs.google.com/spreadsheets/d/${spreadsheetId}/export?format=xlsx`;
+        console.log("Auto-converted Google Sheet URL to direct Excel export link:", publishedUrl);
+    }
+
+    let response;
+    try {
+        // Try fetching via CORS proxy first to bypass docs.google.com blocks
+        const proxiedUrl = `https://api.allorigins.win/raw?url=${encodeURIComponent(publishedUrl)}`;
+        console.log("Fetching Google Sheet via CORS proxy...");
+        response = await fetch(proxiedUrl);
+    } catch (e) {
+        console.warn("CORS proxy failed, attempting direct fetch...", e);
+    }
+
+    if (!response || !response.ok) {
+        console.log("Attempting direct fetch without proxy...");
+        response = await fetch(publishedUrl);
+    }
+
     if (!response.ok) {
         throw new Error(`Failed to fetch published sheet: ${response.statusText} (${response.status})`);
     }
@@ -3255,61 +3315,7 @@ async function syncGoogleSheetsData() {
     }
 }
 
-async function fetchGoogleSheetsAPI() {
-    const { spreadsheetId, apiKey, range } = state.googleSheets;
-    if (!spreadsheetId || !apiKey) {
-        throw new Error('Spreadsheet ID and API Key are required for API method.');
-    }
-    const url = `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent(range)}?key=${apiKey}`;
-    const response = await fetch(url);
-    if (!response.ok) {
-        throw new Error(`Failed to fetch from Google Sheets API: ${response.statusText} (${response.status})`);
-    }
-    const data = await response.json();
-    if (!data.values || data.values.length === 0) {
-        throw new Error('No data found in the specified range.');
-    }
-
-    const headers = data.values[0];
-    const rows = [];
-    for (let i = 1; i < data.values.length; i++) {
-        const row = {};
-        const vals = data.values[i];
-        headers.forEach((header, index) => {
-            row[header] = vals[index] !== undefined ? vals[index] : '';
-        });
-        rows.push(row);
-    }
-    return rows;
-}
-
-async function fetchGoogleSheetsPublished() {
-    let { publishedUrl } = state.googleSheets;
-    if (!publishedUrl) {
-        throw new Error('Published Spreadsheet URL is required for Published method.');
-    }
-
-    // Auto-detect standard Google Sheet URL and convert it to export link
-    const match = publishedUrl.match(/\/spreadsheets\/d\/([a-zA-Z0-9-_]+)/);
-    if (match && match[1]) {
-        const spreadsheetId = match[1];
-        publishedUrl = `https://docs.google.com/spreadsheets/d/${spreadsheetId}/export?format=xlsx`;
-        console.log("Auto-converted Google Sheet URL to direct Excel export link:", publishedUrl);
-    }
-
-    const response = await fetch(publishedUrl);
-    if (!response.ok) {
-        throw new Error(`Failed to fetch published sheet: ${response.statusText} (${response.status})`);
-    }
-    const arrayBuffer = await response.arrayBuffer();
-
-    const data = new Uint8Array(arrayBuffer);
-    const workbook = XLSX.read(data, { type: 'array', cellDates: true });
-    const sheetName = workbook.SheetNames[0];
-    const worksheet = workbook.Sheets[sheetName];
-    const rows = XLSX.utils.sheet_to_json(worksheet);
-    return rows;
-}
+// Helpers removed to prevent duplication
 
 let googleSheetsIntervalId = null;
 let secondsRemaining = 60;
