@@ -175,53 +175,22 @@ document.addEventListener('DOMContentLoaded', () => {
 });
 
 // Load data from localStorage or fetch Excel
+// Load data from Google Sheets only - no fallbacks to local files
 async function loadData() {
     loadGoogleSheetsConfig();
 
-    if (state.googleSheets.enabled) {
+    if (state.googleSheets.enabled && state.googleSheets.publishedUrl) {
         updateSyncStatus('Syncing Google Sheet...');
         const success = await syncGoogleSheetsData();
         if (success) {
             removeStartupOverlay();
             return;
         } else {
-            console.warn('Google Sheets sync failed at startup, falling back to local storage/demo...');
-        }
-    }
-
-    const localFF = localStorage.getItem('dash_ff_data');
-    const localAttr = localStorage.getItem('dash_attrition_data');
-    const localHeadcount = localStorage.getItem('dash_active_headcount');
-    const localStatus = localStorage.getItem('dash_sync_status');
-
-    if (localFF && localAttr && localHeadcount) {
-        try {
-            state.ffData = JSON.parse(localFF);
-            state.attritionData = JSON.parse(localAttr);
-            state.activeHeadcount = JSON.parse(localHeadcount);
-
-            // Force refresh from Excel if cached data doesn't have the new 'region' field
-            const hasRegion = state.attritionData.length > 0 && state.attritionData[0].hasOwnProperty('region') && state.attritionData[0].region;
-            if (!hasRegion) {
-                console.log("Cached data is outdated (missing region/grade), refreshing from Excel...");
-                localStorage.removeItem('dash_ff_data');
-                localStorage.removeItem('dash_attrition_data');
-                localStorage.removeItem('dash_active_headcount');
-                await fetchExcelData();
-                return;
-            }
-
-            updateSyncStatus(localStatus || 'Loaded from local storage');
-            populateDropdownFilters();
-            updateUI();
-            removeStartupOverlay();
-        } catch (e) {
-            console.error("Error loading cached data, clearing...", e);
-            localStorage.clear();
-            await fetchExcelData();
+            console.warn('Google Sheets sync failed at startup.');
+            showStartupOverlay('Google Sheets Sync Failed. Please ensure your Google Sheet sharing permission is set to "Anyone with the link can view", check your URL, and ensure you are connected to the internet.');
         }
     } else {
-        await fetchExcelData();
+        showStartupOverlay('');
     }
 }
 
@@ -328,38 +297,43 @@ function normalizeExcelRows(rows) {
     const exitCountsByPl = {};
 
     rows.forEach((row, index) => {
-        // Clean Windows-style CRLF in Excel headers
+        // Clean Excel headers by lowercasing, converting newlines/returns to spaces, and collapsing spaces
         const cleanRow = {};
         for (const key in row) {
             if (Object.prototype.hasOwnProperty.call(row, key)) {
-                const cleanKey = key.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+                const cleanKey = key.toLowerCase()
+                                    .replace(/\r\n/g, ' ')
+                                    .replace(/\n/g, ' ')
+                                    .replace(/\r/g, ' ')
+                                    .replace(/\s+/g, ' ')
+                                    .trim();
                 cleanRow[cleanKey] = row[key];
             }
         }
         row = cleanRow;
 
-        const empCode = String(row['Employee \nCode'] || row['Employee Code'] || '').trim();
+        const empCode = String(row['employee code'] || row['employee id'] || '').trim();
         if (!empCode || empCode === 'nan' || empCode === '') return; // Skip empty rows
 
         const name = generateName(empCode);
-        const gender = String(row['Gender'] || '').trim() || generateGender(empCode);
+        const gender = String(row['gender'] || '').trim() || generateGender(empCode);
 
         // Map employee type
-        let empType = String(row['Emp Type'] || 'On-Roll').trim();
-        empType = empType.replace('On-Roll', 'Onroll');
+        let empType = String(row['emp type'] || 'On-Roll').trim();
+        empType = empType.replace('On-Roll', 'Onroll').replace('On Roll', 'Onroll').replace('On-roll', 'Onroll');
         if (!['Onroll', 'Consultant', 'Intern'].includes(empType)) {
             empType = 'Onroll';
         }
 
         // Map P&L Department
-        const rawPl = String(row['P&L/COE Name'] || 'Unassigned').trim();
+        const rawPl = String(row['p&l/coe name'] || row['p&l/coe department'] || row['department'] || 'Unassigned').trim();
         const plName = plMap[rawPl] || rawPl;
 
         // Exit Counts for headcount base calculations
         exitCountsByPl[plName] = (exitCountsByPl[plName] || 0) + 1;
 
         // HRBP Lead
-        let hrbpLead = String(row['HRBP Lead'] || 'Unassigned').trim();
+        let hrbpLead = String(row['hrbp lead'] || 'Unassigned').trim();
         if (hrbpLead === 'nan' || hrbpLead === '') {
             hrbpLead = 'Unassigned';
         }
@@ -368,32 +342,32 @@ function normalizeExcelRows(rows) {
             .replace('Charvi sarin', 'Charvi Sarin');
 
         // Dates parsing
-        const doj = excelDateToDate(row['DOJ']);
-        const dol = excelDateToDate(row['DOL']);
-        const dor = excelDateToDate(row['DOR']);
+        const doj = excelDateToDate(row['doj']);
+        const dol = excelDateToDate(row['dol'] || row['date of leaving']);
+        const dor = excelDateToDate(row['dor'] || row['resignation date']);
 
-        const lastNdcTriggered = excelDateToDate(row['Last NDC Triggered Date']);
-        const hrbpClearance = excelDateToDate(row['HRBP NDC Date']);
-        const itClearance = excelDateToDate(row['IT Clearance Date']);
-        const financeClearance = excelDateToDate(row['Finance Clearance Date']);
-        const adminClearance = excelDateToDate(row['Admin Clearance Date']);
-        const highestNdcClearance = excelDateToDate(row['Highest date for NDC']);
-        const closureDate = excelDateToDate(row['Final F&F \nClosure Date'] || row['Final F&F Closure Date']);
-        const paymentDate = excelDateToDate(row['F&F Payment Date']);
+        const lastNdcTriggered = excelDateToDate(row['last ndc triggered date'] || row['last ndc date']);
+        const hrbpClearance = excelDateToDate(row['hrbp ndc date'] || row['hrbp ndc']);
+        const itClearance = excelDateToDate(row['it clearance date'] || row['it clearance']);
+        const financeClearance = excelDateToDate(row['finance clearance date'] || row['finance clearance']);
+        const adminClearance = excelDateToDate(row['admin clearance date'] || row['admin clearance']);
+        const highestNdcClearance = excelDateToDate(row['highest date for ndc'] || row['highest ndc date']);
+        const closureDate = excelDateToDate(row['final f&f closure date'] || row['final f&f closure']);
+        const paymentDate = excelDateToDate(row['f&f payment date'] || row['f&f payment']);
 
         const monthName = dol ? dol.toLocaleString('default', { month: 'long' }) : '';
 
         // Parse Column AA: F&F Amount (Payable / Recovery)
-        let rawAA = row['F&F Amount\n(Payable / Recovery)'] || row['F&F Amount\r\n(Payable / Recovery)'] || 0;
+        let rawAA = row['f&f amount (payable / recovery)'] || row['f&f amount payable / recovery'] || 0;
         let ffAmountAA = parseInt(String(rawAA).replace(/[^0-9.-]+/g, "")) || 0;
 
         // Parse Column AE: Final F&F Recovery/ Payble Amount
-        let rawAE = row['Final F&F Recovery/ Payble Amount'] || row['Final F&F Recovery/ Payable Amount'] || row['Final F&F Recovery/ Payble Amount\r'] || 0;
+        let rawAE = row['final f&f recovery/ payble amount'] || row['final f&f recovery/ payable amount'] || 0;
         let finalAmountAE = parseInt(String(rawAE).replace(/[^0-9.-]+/g, "")) || 0;
 
         // Ageing
         let ageing = null;
-        const rawAgeing = row['F&F Aeging'] !== undefined ? row['F&F Aeging'] : row['F&F Ageing'];
+        const rawAgeing = row['f&f aeging'] !== undefined ? row['f&f aeging'] : row['f&f ageing'];
         if (rawAgeing !== undefined && rawAgeing !== null && rawAgeing !== '') {
             const parsedAgeing = parseInt(rawAgeing);
             if (!isNaN(parsedAgeing)) {
@@ -403,7 +377,7 @@ function normalizeExcelRows(rows) {
 
         // Clearance Status
         let clearanceStatus = 'In Progress';
-        const remarks = String(row['Final Remarks'] || '').toLowerCase();
+        const remarks = String(row['final remarks'] || '').toLowerCase();
         if (paymentDate) {
             clearanceStatus = 'Settled';
         } else if (remarks.includes('hold') || remarks.includes('freeze') || remarks.includes('freezed')) {
@@ -413,10 +387,10 @@ function normalizeExcelRows(rows) {
         }
 
         // Payable vs Recovery status
-        const paymentType = String(row['F&F Status\n(Payable / Recovery)'] || 'Payable').trim();
+        const paymentType = String(row['f&f status (payable / recovery)'] || 'Payable').trim();
 
         // Attrition type logic: Involuntary if served notice period <= 5 days & tenure < 90 days, or remarks indicate termination
-        let npServed = parseInt(row['Notice Peirod Serve Days']) || 30;
+        let npServed = parseInt(row['notice peirod serve days'] || row['notice period serve days']) || 30;
         let tenureMonths = 12;
         if (doj && dol) {
             tenureMonths = Math.max(0, Math.floor((dol - doj) / (1000 * 60 * 60 * 24 * 30.4)));
@@ -435,7 +409,7 @@ function normalizeExcelRows(rows) {
         }
 
         // Parse Separation Reason
-        let reason = String(row['Separation Reason'] || '').trim();
+        let reason = String(row['separation reason'] || '').trim();
         if (!reason || reason.toLowerCase() === 'nan') {
             if (exitType === 'Involuntary') {
                 const reasons = ['Performance', 'Restructuring', 'Policy Violation'];
@@ -450,10 +424,10 @@ function normalizeExcelRows(rows) {
         const isDropout = tenureMonths < 3; // less than 90 days tenure
 
         // Parse Region and Grade
-        const rawRegion = String(row['Region'] || row['Zone'] || '').trim();
+        const rawRegion = String(row['region'] || row['zone'] || '').trim();
         const region = rawRegion || ['North', 'South', 'East', 'West'][getHashValue(empCode + "_region", 4)];
 
-        const rawGrade = String(row['Grade'] || '').trim();
+        const rawGrade = String(row['grade'] || '').trim();
         let grade = rawGrade;
         if (!grade || grade.toLowerCase() === 'nan') {
             grade = ['Grade 1', 'Grade 2', 'Grade 3', 'Grade 4', 'Grade 5'][getHashValue(empCode + "_grade", 5)];
@@ -570,53 +544,56 @@ function showStartupOverlay(errorMessage) {
         document.body.appendChild(overlay);
     }
 
+    const currentUrl = state.googleSheets.publishedUrl || '';
+
     overlay.innerHTML = `
-        <div class="startup-overlay-card">
-            <svg class="startup-overlay-icon" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+        <div class="startup-overlay-card" style="max-width: 500px; padding: 2.5rem; text-align: center;">
+            <svg class="startup-overlay-icon" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" style="width: 48px; height: 48px; margin: 0 auto 1.25rem; color: var(--color-blue-primary);">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 17v-2a4 4 0 00-4-4H3m2 6a2 2 0 100-4 2 2 0 000 4zm10-2h4a4 4 0 004-4v-2m-4 6a2 2 0 100-4 2 2 0 000 4zM9 9a2 2 0 114 0 2 2 0 01-4 0zM21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
             </svg>
-            <h2 class="startup-overlay-title">Excel Integration Required</h2>
-            <p class="startup-overlay-desc">
-                The browser blocked loading <code>Dashboard data.xlsx</code> automatically (due to CORS policy on local files). Please drag & drop or select the file from your local disk to start.
+            <h2 class="startup-overlay-title" style="font-size: 1.5rem; margin-bottom: 0.5rem; font-weight: 700;">Connect Google Sheet</h2>
+            <p class="startup-overlay-desc" style="font-size: 0.875rem; color: var(--color-text-muted); margin-bottom: 1.5rem;">
+                The dashboard runs entirely in your browser and pulls exits data in real-time from your Google Sheet.
             </p>
-            <div id="startup-drop-zone" class="startup-drop-zone">
-                <svg width="24" height="24" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
-                </svg>
-                <span class="startup-drop-zone-text">Drag and drop 'Dashboard data.xlsx' here</span>
-                <span class="startup-drop-zone-subtext">or click to browse local files</span>
-                <input type="file" id="startup-file-input" accept=".xlsx" style="display:none">
+            
+            <div style="display: flex; flex-direction: column; gap: 0.75rem; text-align: left; width: 100%;">
+                <label style="font-size: 0.688rem; font-weight: 600; color: var(--color-text-muted); text-transform: uppercase; letter-spacing: 0.05em;">Google Sheet URL</label>
+                <input type="text" id="startup-sheet-url" class="search-input" value="${currentUrl}" placeholder="Paste your Google Sheets URL here..." style="padding: 0.625rem; font-size: 0.875rem; width: 100%; border-radius: var(--radius-sm); border: 1px solid var(--color-border); background: #ffffff; color: var(--color-text-dark);">
+                <button id="btn-startup-connect" class="btn btn-primary" style="width: 100%; padding: 0.625rem; font-weight: 600; cursor: pointer;">Connect & Sync</button>
             </div>
-            <p style="font-size:0.75rem; color:#ef4444; margin-top:1rem;">Error Detail: ${errorMessage}</p>
+            
+            ${errorMessage ? `<p style="font-size: 0.75rem; color: #ef4444; margin-top: 1.25rem; background: #fee2e2; padding: 0.75rem; border-radius: var(--radius-sm); border: 1px solid #fecaca; width: 100%; text-align: left; line-height: 1.4;"><strong>Error:</strong> ${errorMessage}</p>` : ''}
         </div>
     `;
 
-    // Bind event handlers for startup drop zone
-    const dropZone = overlay.querySelector('#startup-drop-zone');
-    const fileInput = overlay.querySelector('#startup-file-input');
+    // Bind event handlers
+    const connectBtn = overlay.querySelector('#btn-startup-connect');
+    const urlInput = overlay.querySelector('#startup-sheet-url');
 
-    dropZone.addEventListener('click', () => fileInput.click());
-    dropZone.addEventListener('dragover', (e) => {
-        e.preventDefault();
-        dropZone.classList.add('dragover');
-    });
-    ['dragleave', 'dragend'].forEach(type => {
-        dropZone.addEventListener(type, () => dropZone.classList.remove('dragover'));
-    });
-    dropZone.addEventListener('drop', (e) => {
-        e.preventDefault();
-        dropZone.classList.remove('dragover');
-        if (e.dataTransfer.files.length) {
-            handleLocalExcelFile(e.dataTransfer.files[0]);
+    connectBtn.addEventListener('click', async () => {
+        const urlVal = urlInput.value.trim();
+        if (!urlVal) {
+            alert('Please enter your Google Sheets URL first!');
+            return;
         }
-    });
-    fileInput.addEventListener('change', (e) => {
-        if (e.target.files.length) {
-            handleLocalExcelFile(e.target.files[0]);
+
+        connectBtn.disabled = true;
+        connectBtn.textContent = 'Syncing...';
+
+        state.googleSheets.publishedUrl = urlVal;
+        state.googleSheets.enabled = true;
+        
+        const match = urlVal.match(/\/spreadsheets\/d\/([a-zA-Z0-9-_]+)/);
+        if (match && match[1]) {
+            state.googleSheets.spreadsheetId = match[1];
         }
+
+        saveGoogleSheetsConfig();
+        
+        // Retry loading data
+        await loadData();
     });
 }
-
 function handleLocalExcelFile(file) {
     const reader = new FileReader();
     reader.onload = (e) => {
@@ -3054,6 +3031,13 @@ function loadGoogleSheetsConfig() {
             console.error('Error loading Google Sheets config:', e);
         }
     }
+    
+    // Always default to your live Google Sheet if none is stored
+    if (!state.googleSheets.publishedUrl) {
+        state.googleSheets.publishedUrl = 'https://docs.google.com/spreadsheets/d/1nogDCTfDCqIjg8kHu42GoVjUqU6zEwwq30zQ1BbXmjM/edit';
+        state.googleSheets.spreadsheetId = '1nogDCTfDCqIjg8kHu42GoVjUqU6zEwwq30zQ1BbXmjM';
+    }
+    state.googleSheets.enabled = true;
 }
 
 function saveGoogleSheetsConfig() {
@@ -3216,7 +3200,7 @@ async function fetchGoogleSheetsPublished() {
     let response;
     try {
         // Try fetching via CORS proxy first to bypass docs.google.com blocks
-        const proxiedUrl = `https://api.allorigins.win/raw?url=${encodeURIComponent(publishedUrl)}`;
+        const proxiedUrl = `https://corsproxy.io/?${encodeURIComponent(publishedUrl)}`;
         console.log("Fetching Google Sheet via CORS proxy...");
         response = await fetch(proxiedUrl);
     } catch (e) {
