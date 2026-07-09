@@ -910,8 +910,10 @@ function renderRegistryTable() {
 // Setup static and dynamic action event listeners
 function setupEventListeners() {
     // 1. Tab switches
-    document.getElementById('tab-ff').addEventListener('click', () => switchTab('ff'));
-    document.getElementById('tab-attrition').addEventListener('click', () => switchTab('attrition'));
+    const tabFF = document.getElementById('tab-ff');
+    if (tabFF) tabFF.addEventListener('click', () => switchTab('ff'));
+    const tabAttrition = document.getElementById('tab-attrition');
+    if (tabAttrition) tabAttrition.addEventListener('click', () => switchTab('attrition'));
     
     // 2. Filter wrapper clicks
     const dropdowns = [
@@ -946,32 +948,14 @@ function setupEventListeners() {
     // 3. Employee type checkbox trigger listeners
     const customDropdown = document.getElementById('dropdown-employee-type');
     if (customDropdown) {
-        const allCb = document.getElementById('chk-type-all');
-        const itemCbs = customDropdown.querySelectorAll('input[name="chk-type"]');
-        allCb.addEventListener('change', () => {
-            if (allCb.checked) {
-                itemCbs.forEach(cb => cb.checked = true);
-                state.filters.employeeType = ['All'];
-            } else {
-                itemCbs.forEach(cb => cb.checked = false);
-                state.filters.employeeType = [];
-            }
-            updateEmployeeTypeTriggerLabel();
-            updateUI();
-        });
-        itemCbs.forEach(cb => {
+        const checkboxes = customDropdown.querySelectorAll('input[type="checkbox"]');
+        checkboxes.forEach(cb => {
             cb.addEventListener('change', () => {
-                if (!cb.checked) allCb.checked = false;
                 const active = [];
-                itemCbs.forEach(c => {
+                checkboxes.forEach(c => {
                     if (c.checked) active.push(c.value);
                 });
-                if (active.length === itemCbs.length) {
-                    allCb.checked = true;
-                    state.filters.employeeType = ['All'];
-                } else {
-                    state.filters.employeeType = active;
-                }
+                state.filters.employeeType = active.length === 0 ? ['All'] : active;
                 updateEmployeeTypeTriggerLabel();
                 updateUI();
             });
@@ -979,59 +963,82 @@ function setupEventListeners() {
     }
 
     // 4. Gender trigger
-    document.getElementById('select-gender').addEventListener('change', (e) => {
-        state.filters.gender = [e.target.value];
-        updateUI();
-    });
+    const selectGender = document.getElementById('select-gender');
+    if (selectGender) {
+        selectGender.addEventListener('change', (e) => {
+            state.filters.gender = [e.target.value];
+            updateUI();
+        });
+    }
 
     // 5. Search registries input listener
-    document.getElementById('search-registry').addEventListener('input', (e) => {
-        state.search.registry = e.target.value;
-        state.pagination.registry.page = 1;
-        renderRegistryTable();
-    });
-
-    // 6. Registry table header sorts
-    document.querySelectorAll('table#table-registry th.sortable').forEach(th => {
-        th.addEventListener('click', () => {
-            const column = th.getAttribute('data-sort');
-            const currentSort = state.sort.registry;
-            if (currentSort.column === column) {
-                currentSort.order = currentSort.order === 'asc' ? 'desc' : 'asc';
-            } else {
-                currentSort.column = column;
-                currentSort.order = 'asc';
-            }
-            
-            th.closest('tr').querySelectorAll('th').forEach(sib => {
-                sib.classList.remove('sort-asc', 'sort-desc');
-            });
-            th.classList.add(currentSort.order === 'asc' ? 'sort-asc' : 'sort-desc');
+    const searchInput = document.getElementById('search-recovery-table');
+    if (searchInput) {
+        searchInput.addEventListener('input', (e) => {
+            state.search.registry = e.target.value;
             state.pagination.registry.page = 1;
             renderRegistryTable();
         });
-    });
+    }
+
+    // 6. Registry table header sorts
+    const tableRegistry = document.getElementById('table-registry');
+    if (tableRegistry) {
+        tableRegistry.querySelectorAll('th.sortable').forEach(th => {
+            th.addEventListener('click', () => {
+                const column = th.getAttribute('data-sort');
+                const currentSort = state.sort.registry;
+                if (currentSort.column === column) {
+                    currentSort.order = currentSort.order === 'asc' ? 'desc' : 'asc';
+                } else {
+                    currentSort.column = column;
+                    currentSort.order = 'asc';
+                }
+                
+                th.closest('tr').querySelectorAll('th').forEach(sib => {
+                    sib.classList.remove('sort-asc', 'sort-desc');
+                });
+                th.classList.add(currentSort.order === 'asc' ? 'sort-asc' : 'sort-desc');
+                state.pagination.registry.page = 1;
+                renderRegistryTable();
+            });
+        });
+    }
 
     // 7. Sync Modal listeners
     const modal = document.getElementById('sync-modal');
-    document.getElementById('btn-sync-data').addEventListener('click', () => {
-        modal.setAttribute('aria-hidden', 'false');
-    });
-    const hideModal = () => modal.setAttribute('aria-hidden', 'true');
-    document.getElementById('btn-close-modal').addEventListener('click', hideModal);
-    document.getElementById('btn-close-modal-overlay').addEventListener('click', hideModal);
-    document.getElementById('btn-close-modal-footer').addEventListener('click', hideModal);
+    const btnSyncData = document.getElementById('btn-sync-data');
+    if (btnSyncData && modal) {
+        btnSyncData.addEventListener('click', () => {
+            modal.setAttribute('aria-hidden', 'false');
+        });
+    }
+    const hideModal = () => {
+        if (modal) modal.setAttribute('aria-hidden', 'true');
+    };
+    const btnCloseModal = document.getElementById('btn-close-modal');
+    if (btnCloseModal) btnCloseModal.addEventListener('click', hideModal);
+    const btnCloseModalOverlay = document.getElementById('btn-close-modal-overlay');
+    if (btnCloseModalOverlay) btnCloseModalOverlay.addEventListener('click', hideModal);
+    const btnCloseModalFooter = document.getElementById('btn-close-modal-footer');
+    if (btnCloseModalFooter) btnCloseModalFooter.addEventListener('click', hideModal);
     
     // Save/sync button calls FastAPI sync immediately
-    document.getElementById('btn-save-sheets-config').addEventListener('click', () => {
-        triggerImmediateSync();
-    });
+    const btnSaveSheets = document.getElementById('btn-save-sheets-config');
+    if (btnSaveSheets) {
+        btnSaveSheets.addEventListener('click', () => {
+            triggerImmediateSync();
+        });
+    }
     
     // 8. Reasons component dropdown pl name filter
-    document.getElementById('reasons-pl-select').addEventListener('change', (e) => {
-        state.filters.reasons_pl = e.target.value;
-        loadDashboardMetrics();
-    });
+    const reasonsPlSelect = document.getElementById('reasons-pl-select');
+    if (reasonsPlSelect) {
+        reasonsPlSelect.addEventListener('change', (e) => {
+            state.filters.reasons_pl = e.target.value;
+            loadDashboardMetrics();
+        });
+    }
     
     // Reasons tab switches (Voluntary / Involuntary)
     const reasonsBtns = document.querySelectorAll('.reasons-tab-btn');
@@ -1051,16 +1058,24 @@ function setupEventListeners() {
     });
 
     // 9. Drilldown Pivot Dialog bindings
-    document.getElementById('btn-close-pivot').addEventListener('click', closePivotModal);
-    document.getElementById('btn-close-pivot-overlay').addEventListener('click', closePivotModal);
-    document.getElementById('btn-close-pivot-footer').addEventListener('click', closePivotModal);
-    document.getElementById('btn-download-pivot-excel').addEventListener('click', downloadPivotExcel);
-    document.getElementById('pivot-row-field').addEventListener('change', rebuildPivotTable);
-    document.getElementById('pivot-value-metric').addEventListener('change', rebuildPivotTable);
+    const btnClosePivot = document.getElementById('btn-close-pivot');
+    if (btnClosePivot) btnClosePivot.addEventListener('click', closePivotModal);
+    const btnClosePivotOverlay = document.getElementById('btn-close-pivot-overlay');
+    if (btnClosePivotOverlay) btnClosePivotOverlay.addEventListener('click', closePivotModal);
+    const btnClosePivotFooter = document.getElementById('btn-close-pivot-footer');
+    if (btnClosePivotFooter) btnClosePivotFooter.addEventListener('click', closePivotModal);
+    const btnDownloadPivot = document.getElementById('btn-download-pivot-excel');
+    if (btnDownloadPivot) btnDownloadPivot.addEventListener('click', downloadPivotExcel);
+    const pivotRowField = document.getElementById('pivot-row-field');
+    if (pivotRowField) pivotRowField.addEventListener('change', rebuildPivotTable);
+    const pivotValueMetric = document.getElementById('pivot-value-metric');
+    if (pivotValueMetric) pivotValueMetric.addEventListener('change', rebuildPivotTable);
     
     // 10. Drawer Close trigger
-    document.getElementById('btn-close-drawer').addEventListener('click', closeDrawer);
-    document.getElementById('btn-close-drawer-overlay').addEventListener('click', closeDrawer);
+    const btnCloseDrawer = document.getElementById('btn-close-drawer');
+    if (btnCloseDrawer) btnCloseDrawer.addEventListener('click', closeDrawer);
+    const btnCloseDrawerOverlay = document.getElementById('btn-close-drawer-overlay');
+    if (btnCloseDrawerOverlay) btnCloseDrawerOverlay.addEventListener('click', closeDrawer);
 
     // 11. Chart Clicks (Chart JS integration)
     bindChartDrilldowns();
