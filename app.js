@@ -1103,16 +1103,34 @@ function switchTab(tab) {
 }
 
 function setupModalTabs() {
-    const tabs = document.querySelectorAll('.modal-tab-btn');
-    const panels = document.querySelectorAll('.modal-tab-panel');
-    tabs.forEach(tab => {
-        tab.addEventListener('click', () => {
-            tabs.forEach(t => t.classList.remove('active'));
-            panels.forEach(p => p.classList.remove('active'));
-            tab.classList.add('active');
-            const panelId = tab.getAttribute('data-panel');
-            document.getElementById(panelId).classList.add('active');
-        });
+    const tabFile = document.getElementById('modal-tab-file');
+    const tabSheets = document.getElementById('modal-tab-sheets');
+    const panelFile = document.getElementById('modal-panel-file');
+    const panelSheets = document.getElementById('modal-panel-sheets');
+
+    if (!tabFile || !tabSheets || !panelFile || !panelSheets) return;
+
+    tabFile.addEventListener('click', () => {
+        tabFile.classList.add('active');
+        tabSheets.classList.remove('active');
+        panelFile.classList.remove('hidden');
+        panelSheets.classList.add('hidden');
+        tabFile.style.borderBottomColor = 'var(--color-blue-accent)';
+        tabFile.style.color = 'var(--color-blue-accent)';
+        tabSheets.style.borderBottomColor = 'transparent';
+        tabSheets.style.color = 'var(--color-text-muted)';
+    });
+
+    tabSheets.addEventListener('click', () => {
+        tabSheets.classList.add('active');
+        tabFile.classList.remove('active');
+        panelSheets.classList.remove('hidden');
+        panelFile.classList.add('hidden');
+        tabSheets.style.borderBottomColor = 'var(--color-blue-accent)';
+        tabSheets.style.color = 'var(--color-blue-accent)';
+        tabFile.style.borderBottomColor = 'transparent';
+        tabFile.style.color = 'var(--color-text-muted)';
+        updateSyncHistoryLogs();
     });
 }
 
