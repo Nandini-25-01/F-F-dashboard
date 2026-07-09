@@ -139,7 +139,12 @@ def sync_google_sheets(override_sheet_id=None):
         creds = Credentials.from_service_account_file(CREDENTIALS_FILE, scopes=scopes)
         client = gspread.authorize(creds)
         
-        sheet = client.open_by_key(sheet_id).worksheet(SHEET_NAME)
+        sh = client.open_by_key(sheet_id)
+        worksheets = sh.worksheets()
+        if not worksheets:
+            raise Exception("No worksheets found in this spreadsheet.")
+        sheet = worksheets[0]
+        print(f"Opening first worksheet: '{sheet.title}'")
         raw_data = sheet.get_all_values(value_render_option="UNFORMATTED_VALUE")
         
         if not raw_data:
@@ -154,14 +159,10 @@ def sync_google_sheets(override_sheet_id=None):
         df = pd.DataFrame(rows, columns=headers)
         
         # Step 3: Normalize Column Headers
+        import re
         raw_headers = list(df.columns)
         clean_headers = [
-            str(h).lower()
-            .replace('\r\n', ' ')
-            .replace('\n', ' ')
-            .replace('\r', ' ')
-            .replace('  ', ' ')
-            .strip()
+            re.sub(r'\s+', ' ', str(h)).strip().lower()
             for h in raw_headers
         ]
         
