@@ -10,4 +10,7 @@ test_js_parsing.js
 ~$Dashboard data.xlsx
 validate_data.py
 validate_local_data.py
-*.py
+__pycache__/
+*.pyc
+*.pyo
+*.pyd

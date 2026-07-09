@@ -1,56 +1,29 @@
-// ==========================================================================
-// CORE STATE MANAGEMENT
-// ==========================================================================
-// Register Datalabels plugin globally if available
-if (typeof Chart !== 'undefined' && typeof ChartDataLabels !== 'undefined') {
-    Chart.register(ChartDataLabels);
-}
-
+// F&F Dashboard Full-Stack App Controller
 const state = {
-    ffData: [],
-    attritionData: [],
     activeTab: 'ff', // 'ff' or 'attrition'
-    filters: {
-        employeeTypes: ['Onroll', 'Consultant', 'Intern'],
-        hrbpLead: ['All'],
-        plName: ['All'],
-        month: [new Date().toLocaleString('default', { month: 'long' })],
-        gender: 'All',
-        year: [new Date().getFullYear().toString()],
-        momMonth: 'All',
-        momYear: 'All'
-    },
-    search: {
-        ff: '',
-        attrition: '',
-        mom: '',
-        recovery: ''
-    },
-    sort: {
-        ff: { column: 'lastWorkingDay', order: 'desc' },
-        attrition: { column: 'exitDate', order: 'desc' },
-        mom: { column: 'count', order: 'desc' },
-        recovery: { column: 'totalRecovered', order: 'desc' }
-    },
-    pagination: {
-        ff: { page: 1, size: 50 },
-        attrition: { page: 1, size: 50 },
-        mom: { page: 1, size: 10 },
-        recovery: { page: 1, size: 100 }
-    },
-    activeHeadcount: {},
     activeSubTab: 'Voluntary', // 'Voluntary' or 'Involuntary'
     activeReasonsTab: 'voluntary',
     activeEmpExitsTab: 'combined',
-    googleSheets: {
-        enabled: false,
-        method: 'published', // 'published' or 'api'
-        apiKey: '',
-        spreadsheetId: '',
-        range: 'Sheet1',
-        publishedUrl: '',
-        refreshInterval: 1, // in minutes
-        lastRefreshed: null
+    filters: {
+        employeeType: ['All'],
+        hrbpLead: ['All'],
+        plName: ['All'],
+        gender: ['All'],
+        year: ['All'],
+        month: ['All'],
+        reasons_tab: 'voluntary',
+        reasons_pl: 'All'
+    },
+    widgets: {},
+    rawExits: [],
+    pagination: {
+        registry: { page: 1, size: 10 }
+    },
+    search: {
+        registry: ''
+    },
+    sort: {
+        registry: { column: 'lastWorkingDay', order: 'desc' }
     }
 };
 
@@ -58,2200 +31,445 @@ const state = {
 const charts = {
     ffStatus: null,
     ffBuckets: null,
-    ffNdcClearance: null,
-    ffPaymentType: null,
-    ffPayoutPl: null,
-    ffRecoveryDept: null,
+    ndcRadar: null,
+    ffPl: null,
     attritionPl: null,
-    attritionType: null,
     attritionVoluntary: null,
-    attritionTenure: null,
-    attritionRegion: null,
-    attritionGender: null
+    attritionTenure: null
 };
 
-// Seed names for deterministic de-anonymization
-const firstNames = [
-    'Amit', 'Rohan', 'Priya', 'Siddharth', 'Aditya', 'Neha', 'Karan', 'Deepika', 'Rahul', 'Sneha',
-    'Vikram', 'Ananya', 'Varun', 'Kriti', 'Arjun', 'Meera', 'Pooja', 'Sanjay', 'Sunita', 'Rajesh',
-    'Anil', 'Geeta', 'Vijay', 'Kiran', 'Suresh', 'Anita', 'Ramesh', 'Harish', 'Manish', 'Preeti',
-    'Abhishek', 'Aarav', 'Ishaan', 'Kabir', 'Aanya', 'Diya', 'Riya', 'Vihaan', 'Sai', 'Pranav',
-    'Dev', 'Tara', 'Maya', 'Nisha', 'Aman', 'Aravind', 'Divya', 'Gaurav', 'Jyoti', 'Kartik'
-];
-const lastNames = [
-    'Sharma', 'Verma', 'Gupta', 'Singh', 'Patel', 'Kumar', 'Joshi', 'Mehta', 'Reddy', 'Nair',
-    'Malhotra', 'Sen', 'Dhawan', 'Sanon', 'Rampal', 'Hegde', 'Sharma', 'Das', 'Roy', 'Choudhury',
-    'Bose', 'Johar', 'Zinta', 'Kapoor', 'Mishra', 'Trivedi', 'Yadav', 'Rao', 'Dubey', 'Saxena',
-    'Pandey', 'Deshmukh', 'Kulkarni', 'Bhat', 'Shetty', 'Pillai', 'Menon', 'Nair', 'Iyer', 'Srinivasan',
-    'Subramanian', 'Mukherjee', 'Banerjee', 'Chatterjee', 'Dutta', 'Sinha', 'Prasad', 'Guha', 'Ganguly'
-];
-
-function getHashValue(str, maxVal) {
-    let hash = 0;
-    for (let i = 0; i < str.length; i++) {
-        hash = (hash << 5) - hash + str.charCodeAt(i);
-        hash |= 0; // Convert to 32bit integer
-    }
-    return Math.abs(hash) % maxVal;
-}
-
-function generateName(empId) {
-    const fIdx = getHashValue(empId, firstNames.length);
-    const lIdx = getHashValue(empId + "_last", lastNames.length);
-    return `${firstNames[fIdx]} ${lastNames[lIdx]}`;
-}
-
-function generateGender(empId) {
-    const gVal = getHashValue(empId + "_gender", 100);
-    return gVal < 40 ? "Female" : "Male";
-}
-
-// Clean P&L Name mapping to merge duplicate casings
-const plMap = {
-    'PRODUCT & TECHNOLOGY': 'Product & Technology',
-    'Product & Technology': 'Product & Technology',
-    'CATEGORY MANAGEMENT': 'Category Management',
-    'Category Management': 'Category Management',
-    'CUSTOMER EXPERIENCE': 'Customer Experience',
-    'Customer Experience': 'Customer Experience',
-    'PROJECT MANAGEMENT AND ADMINISTRATIVE OPERATIONS': 'Project Management & Admin',
-    'Project Management and Administrative Operations': 'Project Management & Admin',
-    'B&M RETAIL': 'B&M Retail',
-    'B&M Retail': 'B&M Retail',
-    'HOSPITALS': 'Hospitals',
-    'Hospitals': 'Hospitals',
-    'HEALTHCARE SERVICES & CORPORATE DELIVERY': 'Healthcare Services & Corp',
-    'Healthcare Services & Corporate Delivery': 'Healthcare Services & Corp',
-    'PHARMACY SUPPLY CHAIN': 'Pharmacy Supply Chain',
-    'Pharmacy Supply Chain': 'Pharmacy Supply Chain',
-    'PLANNING & PURCHASE': 'Planning & Purchase',
-    'Planning & Purchase': 'Planning & Purchase',
-    'DIAGNOSTIC SUPPLY CHAIN': 'Diagnostic Supply Chain',
-    'Diagnostic Supply Chain': 'Diagnostic Supply Chain',
-    'EPHARMACY': 'ePharmacy',
-    'ePharmacy': 'ePharmacy',
-    'CORPORATE, HEALTH & WELLNESS': 'Corporate Health & Wellness',
-    'Corporate, Health & Wellness': 'Corporate Health & Wellness',
-    "FOUNDER'S OFFICE": "Founder's Office",
-    "Founder's Office": "Founder's Office",
-    'HUMAN RESOURCES': 'Human Resources',
-    'Human Resources': 'Human Resources',
-    'MEDICAL AFFAIRS': 'Medical Affairs',
-    'Medical Affairs': 'Medical Affairs',
-    'SPECIALITY PHARMA BUSINESS (PSP)': 'Speciality Pharma (PSP)',
-    'Speciality Pharma Business (PSP)': 'Speciality Pharma (PSP)',
-    'BUSINESS INTELLIGENCE': 'Business Intelligence',
-    'Business Intelligence': 'Business Intelligence',
-    'FINANCE': 'Finance',
-    'Finance': 'Finance',
-    'LEGAL': 'Legal',
-    'Legal': 'Legal',
-    'EDIAGNOSTICS': 'eDiagnostics',
-    'eDiagnostics': 'eDiagnostics',
-    'ADMIN & IT': 'Admin & IT',
-    'Admin & IT': 'Admin & IT',
-    'MARKETING': 'Marketing',
-    'Marketing': 'Marketing',
-    'INSTITUTIONAL QUALITY': 'Institutional Quality',
-    'Institutional Quality': 'Institutional Quality',
-    'DATAVERSE': 'Dataverse',
-    'Dataverse': 'Dataverse',
-    'CLINICAL EXCELLENCE': 'Clinical Excellence',
-    'Clinical Excellence': 'Clinical Excellence',
-    'PHARMACY SUPPLY CHAIN (OLD)': 'Pharmacy Supply Chain (Old)',
-    'Pharmacy Supply Chain (Old)': 'Pharmacy Supply Chain (Old)',
-    'nan': 'Unassigned'
-};
-
-// ==========================================================================
-// LIFE CYCLE & INITIALIZATION
-// ==========================================================================
-document.addEventListener('DOMContentLoaded', () => {
-    setupEventListeners();
-    setupModalTabs();
-    loadGoogleSheetsConfig();
-    loadData();
-    setupGoogleSheetsAutoRefresh();
-});
-
-// Load data from localStorage or fetch Excel
-// Load data from Google Sheets only - no fallbacks to local files
-async function loadData() {
-    loadGoogleSheetsConfig();
-
-    if (state.googleSheets.enabled && state.googleSheets.publishedUrl) {
-        updateSyncStatus('Syncing Google Sheet...');
-        const success = await syncGoogleSheetsData();
-        if (success) {
-            removeStartupOverlay();
-            return;
-        } else {
-            console.warn('Google Sheets sync failed at startup.');
-            showStartupOverlay('Google Sheets Sync Failed. Please ensure your Google Sheet sharing permission is set to "Anyone with the link can view", check your URL, and ensure you are connected to the internet.');
-        }
-    } else {
-        showStartupOverlay('');
-    }
-}
-
-// Fetch Excel Spreadsheet directly
-async function fetchExcelData() {
-    updateSyncStatus('Fetching spreadsheet...');
-    try {
-        const response = await fetch('Dashboard data.xlsx');
-        if (!response.ok) {
-            throw new Error(`Fetch failed: ${response.statusText} (${response.status})`);
-        }
-        const arrayBuffer = await response.arrayBuffer();
-        processExcelBuffer(arrayBuffer, 'Dashboard data.xlsx');
-    } catch (err) {
-        console.error('Error fetching Excel file on startup:', err);
-        showStartupOverlay(err.message);
-    }
-}
-
-// Parse excel array buffer using SheetJS
-function processExcelBuffer(arrayBuffer, filename) {
-    try {
-        updateSyncStatus('Parsing Excel data...');
-        const data = new Uint8Array(arrayBuffer);
-        const workbook = XLSX.read(data, { type: 'array', cellDates: true });
-        const sheetName = workbook.SheetNames[0];
-        const worksheet = workbook.Sheets[sheetName];
-        const rows = XLSX.utils.sheet_to_json(worksheet);
-
-        if (!rows || rows.length === 0) {
-            throw new Error('Excel file contains no rows in the first sheet.');
-        }
-
-        normalizeExcelRows(rows);
-        saveState();
-        setDefaultFiltersToLatest();
-        populateDropdownFilters();
-        updateUI();
-        removeStartupOverlay();
-        showToast(`Successfully loaded Excel data (${rows.length} rows)!`, 'success');
-    } catch (err) {
-        console.error(err);
-        showStartupOverlay(`Failed parsing Excel: ${err.message}`);
-    }
-}
-
-// Date helpers
-function excelDateToDate(val) {
-    if (!val) return null;
-    if (val instanceof Date) return val;
-    // Serial number convert
-    if (typeof val === 'number') {
-        const date = new Date((val - 25569) * 86400 * 1000);
-        return isNaN(date.getTime()) ? null : date;
-    }
-    
-    const strVal = String(val).trim();
-    if (strVal.toLowerCase() === 'nan' || strVal.toLowerCase() === 'nat' || strVal === '') {
-        return null;
-    }
-
-    // Match YYYY-MM-DD
-    let match = strVal.match(/^(\d{4})[-/](\d{2})[-/](\d{2})/);
-    if (match) {
-        return new Date(parseInt(match[1]), parseInt(match[2]) - 1, parseInt(match[3]));
-    }
-
-    // Match DD/MM/YYYY or DD-MM-YYYY
-    match = strVal.match(/^(\d{2})[-/](\d{2})[-/](\d{4})/);
-    if (match) {
-        return new Date(parseInt(match[3]), parseInt(match[2]) - 1, parseInt(match[1]));
-    }
-
-    const parsed = new Date(val);
-    return isNaN(parsed.getTime()) ? null : parsed;
-}
-
-function normalizeGrade(g) {
-    if (!g) return 'Grade 1';
-    const clean = String(g).trim().toUpperCase();
-    if (clean.startsWith('1') || clean === '1') return 'Grade 1';
-    if (clean.startsWith('2') || clean === '2') return 'Grade 2';
-    if (clean.startsWith('3') || clean === '3') return 'Grade 3';
-    if (clean.startsWith('4') || clean === '4') return 'Grade 4';
-    if (clean.startsWith('5') || clean === '5') return 'Grade 5';
-    if (clean.startsWith('6') || clean.startsWith('7') || clean.startsWith('8')) return 'Grade 6+';
-    if (clean.includes('CONSULTANT')) return 'Consultant';
-    if (clean.includes('INTERN')) return 'Intern';
-    return g; // fallback
-}
-
-function formatDateString(date) {
-    if (!date) return "";
-    const y = date.getFullYear();
-    const m = String(date.getMonth() + 1).padStart(2, '0');
-    const d = String(date.getDate()).padStart(2, '0');
-    return `${y}-${m}-${d}`;
-}
-
-// Clean and normalize flat spreadsheet records in JS
-function normalizeExcelRows(rows) {
-    const ffArr = [];
-    const attritionArr = [];
-    const exitCountsByPl = {};
-
-    rows.forEach((row, index) => {
-        // Clean Excel headers by lowercasing, converting newlines/returns to spaces, and collapsing spaces
-        const cleanRow = {};
-        for (const key in row) {
-            if (Object.prototype.hasOwnProperty.call(row, key)) {
-                const cleanKey = key.toLowerCase()
-                                    .replace(/\r\n/g, ' ')
-                                    .replace(/\n/g, ' ')
-                                    .replace(/\r/g, ' ')
-                                    .replace(/\s+/g, ' ')
-                                    .trim();
-                cleanRow[cleanKey] = row[key];
-            }
-        }
-        row = cleanRow;
-
-        const empCode = String(row['employee code'] || row['employee id'] || '').trim();
-        if (!empCode || empCode === 'nan' || empCode === '') return; // Skip empty rows
-
-        const name = generateName(empCode);
-        const gender = String(row['gender'] || '').trim() || generateGender(empCode);
-
-        // Map employee type
-        let empType = String(row['emp type'] || 'On-Roll').trim();
-        empType = empType.replace('On-Roll', 'Onroll').replace('On Roll', 'Onroll').replace('On-roll', 'Onroll');
-        if (!['Onroll', 'Consultant', 'Intern'].includes(empType)) {
-            empType = 'Onroll';
-        }
-
-        // Map P&L Department
-        const rawPl = String(row['p&l/coe name'] || row['p&l/coe department'] || row['department'] || 'Unassigned').trim();
-        const plName = plMap[rawPl] || rawPl;
-
-        // Exit Counts for headcount base calculations
-        exitCountsByPl[plName] = (exitCountsByPl[plName] || 0) + 1;
-
-        // HRBP Lead
-        let hrbpLead = String(row['hrbp lead'] || 'Unassigned').trim();
-        if (hrbpLead === 'nan' || hrbpLead === '') {
-            hrbpLead = 'Unassigned';
-        }
-        hrbpLead = hrbpLead.replace('Tanu Shrivastava', 'Tanu Srivastava')
-            .replace('Jahanvi Mahlotra', 'Janhavi Malhotra')
-            .replace('Charvi sarin', 'Charvi Sarin');
-
-        // Dates parsing
-        const doj = excelDateToDate(row['doj']);
-        const dol = excelDateToDate(row['dol'] || row['date of leaving']);
-        const dor = excelDateToDate(row['dor'] || row['resignation date']);
-
-        const lastNdcTriggered = excelDateToDate(row['last ndc triggered date'] || row['last ndc date']);
-        const hrbpClearance = excelDateToDate(row['hrbp ndc date'] || row['hrbp ndc']);
-        const itClearance = excelDateToDate(row['it clearance date'] || row['it clearance']);
-        const financeClearance = excelDateToDate(row['finance clearance date'] || row['finance clearance']);
-        const adminClearance = excelDateToDate(row['admin clearance date'] || row['admin clearance']);
-        const highestNdcClearance = excelDateToDate(row['highest date for ndc'] || row['highest ndc date']);
-        const closureDate = excelDateToDate(row['final f&f closure date'] || row['final f&f closure']);
-        const paymentDate = excelDateToDate(row['f&f payment date'] || row['f&f payment']);
-
-        const monthName = dol ? dol.toLocaleString('default', { month: 'long' }) : '';
-
-        // Parse Column AA: F&F Amount (Payable / Recovery)
-        let rawAA = row['f&f amount (payable / recovery)'] || row['f&f amount payable / recovery'] || 0;
-        let ffAmountAA = parseInt(String(rawAA).replace(/[^0-9.-]+/g, "")) || 0;
-
-        // Parse Column AE: Final F&F Recovery/ Payble Amount
-        let rawAE = row['final f&f recovery/ payble amount'] || row['final f&f recovery/ payable amount'] || 0;
-        let finalAmountAE = parseInt(String(rawAE).replace(/[^0-9.-]+/g, "")) || 0;
-
-        // Ageing
-        let ageing = null;
-        const rawAgeing = row['f&f aeging'] !== undefined ? row['f&f aeging'] : row['f&f ageing'];
-        if (rawAgeing !== undefined && rawAgeing !== null && rawAgeing !== '') {
-            const parsedAgeing = parseInt(rawAgeing);
-            if (!isNaN(parsedAgeing)) {
-                ageing = parsedAgeing;
-            }
-        }
-
-        // Clearance Status
-        let clearanceStatus = 'In Progress';
-        const remarks = String(row['final remarks'] || '').toLowerCase();
-        if (paymentDate) {
-            clearanceStatus = 'Settled';
-        } else if (remarks.includes('hold') || remarks.includes('freeze') || remarks.includes('freezed')) {
-            clearanceStatus = 'Admin Hold';
-        } else if (remarks.includes('dispute') || remarks.includes('query') || remarks.includes('queries') || remarks.includes('disputed')) {
-            clearanceStatus = 'Disputed';
-        }
-
-        // Payable vs Recovery status
-        const paymentType = String(row['f&f status (payable / recovery)'] || 'Payable').trim();
-
-        // Attrition type logic: Involuntary if served notice period <= 5 days & tenure < 90 days, or remarks indicate termination
-        let npServed = parseInt(row['notice peirod serve days'] || row['notice period serve days']) || 30;
-        let tenureMonths = 12;
-        if (doj && dol) {
-            tenureMonths = Math.max(0, Math.floor((dol - doj) / (1000 * 60 * 60 * 24 * 30.4)));
-        }
-        if (tenureMonths <= 0) {
-            tenureMonths = Math.max(1, Math.floor(npServed / 30));
-        }
-
-        let exitType = 'Voluntary';
-        if (remarks.includes('termination') || remarks.includes('terminate') || remarks.includes('fired') || remarks.includes('abscond')) {
-            exitType = 'Involuntary';
-        } else if (npServed <= 5 && getHashValue(empCode + "_exittype", 10) < 3) {
-            exitType = 'Involuntary';
-        } else if (getHashValue(empCode + "_exittype", 100) < 15) {
-            exitType = 'Involuntary';
-        }
-
-        // Parse Separation Reason
-        let reason = String(row['separation reason'] || '').trim();
-        if (!reason || reason.toLowerCase() === 'nan') {
-            if (exitType === 'Involuntary') {
-                const reasons = ['Performance', 'Restructuring', 'Policy Violation'];
-                reason = reasons[getHashValue(empCode + "_invol_reason", reasons.length)];
-            } else {
-                const reasons = ['Better Opportunity', 'Career Growth', 'Personal Reasons', 'Higher Studies', 'Compensation', 'Contract Completion'];
-                reason = reasons[getHashValue(empCode + "_vol_reason", reasons.length)];
-            }
-        }
-
-        const isRegrettable = (empType === 'Onroll') && (tenureMonths > 12) && (exitType === 'Voluntary');
-        const isDropout = tenureMonths < 3; // less than 90 days tenure
-
-        // Parse Region and Grade
-        const rawRegion = String(row['region'] || row['zone'] || '').trim();
-        const region = rawRegion || ['North', 'South', 'East', 'West'][getHashValue(empCode + "_region", 4)];
-
-        const rawGrade = String(row['grade'] || '').trim();
-        let grade = rawGrade;
-        if (!grade || grade.toLowerCase() === 'nan') {
-            grade = ['Grade 1', 'Grade 2', 'Grade 3', 'Grade 4', 'Grade 5'][getHashValue(empCode + "_grade", 5)];
-        }
-        grade = normalizeGrade(grade);
-
-        ffArr.push({
-            employeeId: empCode,
-            name: name,
-            gender: gender,
-            employeeType: empType,
-            hrbpLead: hrbpLead,
-            plName: plName,
-            month: monthName,
-            lastWorkingDay: dol ? formatDateString(dol) : '',
-            resignationDate: dor ? formatDateString(dor) : '',
-            closureDate: closureDate ? formatDateString(closureDate) : '',
-            clearanceStatus: clearanceStatus,
-            settlementAmount: finalAmountAE,
-            ffAmountAA: ffAmountAA,
-            finalAmountAE: finalAmountAE,
-            payoutDate: paymentDate ? formatDateString(paymentDate) : 'Pending',
-            paymentType: paymentType,
-            ageing: ageing,
-            lastNdcTriggeredDate: formatDateString(lastNdcTriggered),
-            clearanceDates: {
-                hrbp: formatDateString(hrbpClearance),
-                it: formatDateString(itClearance),
-                finance: formatDateString(financeClearance),
-                admin: formatDateString(adminClearance),
-                highest: formatDateString(highestNdcClearance)
-            },
-            clearanceChecklist: {
-                itAssets: itClearance ? 'Cleared' : 'Pending',
-                finance: financeClearance ? 'Cleared' : 'Pending',
-                hr: hrbpClearance ? 'Cleared' : 'Pending',
-                admin: adminClearance ? 'Cleared' : 'Pending'
-            },
-            region: region,
-            grade: grade
-        });
-
-        attritionArr.push({
-            employeeId: empCode,
-            name: name,
-            gender: gender,
-            employeeType: empType,
-            hrbpLead: hrbpLead,
-            plName: plName,
-            month: monthName,
-            exitDate: dol ? formatDateString(dol) : '',
-            resignationDate: dor ? formatDateString(dor) : '',
-            closureDate: closureDate ? formatDateString(closureDate) : '',
-            exitType: exitType,
-            reasonForLeaving: reason,
-            tenureMonths: tenureMonths,
-            isRegrettable: isRegrettable,
-            isDropout: isDropout,
-            region: region,
-            grade: grade
-        });
-    });
-
-    state.ffData = ffArr;
-    state.attritionData = attritionArr;
-
-    // Calculate Active Headcount starting point per P&L
-    state.activeHeadcount = {};
-    Object.keys(exitCountsByPl).forEach(pl => {
-        const exits = exitCountsByPl[pl];
-        state.activeHeadcount[pl] = Math.max(10, exits * 6); // Keep attrition rate around ~14%
-    });
-}
-
-// Save active state to localStorage
-function saveState() {
-    const time = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-    try {
-        localStorage.setItem('dash_ff_data', JSON.stringify(state.ffData));
-        localStorage.setItem('dash_attrition_data', JSON.stringify(state.attritionData));
-        localStorage.setItem('dash_active_headcount', JSON.stringify(state.activeHeadcount));
-        const status = `Synced at ${time}`;
-        localStorage.setItem('dash_sync_status', status);
-        updateSyncStatus(status);
-    } catch (e) {
-        console.warn("localStorage quota exceeded. State changes will not persist across reloads.", e);
-        updateSyncStatus(`Synced at ${time} (storage full)`);
-    }
-}
-
-function updateSyncStatus(text) {
-    const indicator = document.querySelector('.status-indicator');
-    const statusTextEl = document.getElementById('sync-status-text');
-
-    if (statusTextEl) statusTextEl.textContent = text;
-    if (indicator) {
-        if (text.includes('Synced') || text.includes('storage') || text.includes('loaded')) {
-            indicator.className = 'status-indicator synced';
-        } else {
-            indicator.className = 'status-indicator';
-        }
-    }
-}
-
-// ==========================================================================
-// STARTUP OVERLAY & ERROR LOGIC (CORS BYPASS UI)
-// ==========================================================================
-function showStartupOverlay(errorMessage) {
-    let overlay = document.getElementById('startup-overlay');
-    if (!overlay) {
-        overlay = document.createElement('div');
-        overlay.id = 'startup-overlay';
-        overlay.className = 'startup-overlay';
-        document.body.appendChild(overlay);
-    }
-
-    const currentUrl = state.googleSheets.publishedUrl || '';
-
-    overlay.innerHTML = `
-        <div class="startup-overlay-card" style="max-width: 500px; padding: 2.5rem; text-align: center;">
-            <svg class="startup-overlay-icon" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" style="width: 48px; height: 48px; margin: 0 auto 1.25rem; color: var(--color-blue-primary);">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 17v-2a4 4 0 00-4-4H3m2 6a2 2 0 100-4 2 2 0 000 4zm10-2h4a4 4 0 004-4v-2m-4 6a2 2 0 100-4 2 2 0 000 4zM9 9a2 2 0 114 0 2 2 0 01-4 0zM21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-            </svg>
-            <h2 class="startup-overlay-title" style="font-size: 1.5rem; margin-bottom: 0.5rem; font-weight: 700;">Connect Google Sheet</h2>
-            <p class="startup-overlay-desc" style="font-size: 0.875rem; color: var(--color-text-muted); margin-bottom: 1.5rem;">
-                The dashboard runs entirely in your browser and pulls exits data in real-time from your Google Sheet.
-            </p>
-            
-            <div style="display: flex; flex-direction: column; gap: 0.75rem; text-align: left; width: 100%;">
-                <label style="font-size: 0.688rem; font-weight: 600; color: var(--color-text-muted); text-transform: uppercase; letter-spacing: 0.05em;">Google Sheet URL</label>
-                <input type="text" id="startup-sheet-url" class="search-input" value="${currentUrl}" placeholder="Paste your Google Sheets URL here..." style="padding: 0.625rem; font-size: 0.875rem; width: 100%; border-radius: var(--radius-sm); border: 1px solid var(--color-border); background: #ffffff; color: var(--color-text-dark);">
-                <button id="btn-startup-connect" class="btn btn-primary" style="width: 100%; padding: 0.625rem; font-weight: 600; cursor: pointer;">Connect & Sync</button>
-            </div>
-            
-            ${errorMessage ? `<p style="font-size: 0.75rem; color: #ef4444; margin-top: 1.25rem; background: #fee2e2; padding: 0.75rem; border-radius: var(--radius-sm); border: 1px solid #fecaca; width: 100%; text-align: left; line-height: 1.4;"><strong>Error:</strong> ${errorMessage}</p>` : ''}
-        </div>
-    `;
-
-    // Bind event handlers
-    const connectBtn = overlay.querySelector('#btn-startup-connect');
-    const urlInput = overlay.querySelector('#startup-sheet-url');
-
-    connectBtn.addEventListener('click', async () => {
-        const urlVal = urlInput.value.trim();
-        if (!urlVal) {
-            alert('Please enter your Google Sheets URL first!');
-            return;
-        }
-
-        connectBtn.disabled = true;
-        connectBtn.textContent = 'Syncing...';
-
-        state.googleSheets.publishedUrl = urlVal;
-        state.googleSheets.enabled = true;
-        
-        const match = urlVal.match(/\/spreadsheets\/d\/([a-zA-Z0-9-_]+)/);
-        if (match && match[1]) {
-            state.googleSheets.spreadsheetId = match[1];
-        }
-
-        saveGoogleSheetsConfig();
-        
-        // Retry loading data
-        await loadData();
-    });
-}
-function handleLocalExcelFile(file) {
-    const reader = new FileReader();
-    reader.onload = (e) => {
-        const arrayBuffer = e.target.result;
-        processExcelBuffer(arrayBuffer, file.name);
-    };
-    reader.readAsArrayBuffer(file);
-}
-
-function removeStartupOverlay() {
-    const overlay = document.getElementById('startup-overlay');
-    if (overlay) overlay.remove();
-}
-
-function finishLoading() {
-    removeStartupOverlay();
-}
-
-// ==========================================================================
-// EVENT LISTENERS BINDING
-// ==========================================================================
-function setupEventListeners() {
-    // Tab Navigation
-    const tabFF = document.getElementById('tab-ff');
-    const tabAttrition = document.getElementById('tab-attrition');
-
-    tabFF.addEventListener('click', () => switchTab('ff'));
-    tabAttrition.addEventListener('click', () => switchTab('attrition'));
-
-    // Custom Employee Type Dropdown
-    // Setup custom dropdowns open/close toggles
-    const dropdowns = [
-        { id: 'dropdown-employee-type', btnId: 'btn-filter-type' },
-        { id: 'dropdown-hrbp-lead', btnId: 'btn-filter-hrbp' },
-        { id: 'dropdown-pl-name', btnId: 'btn-filter-pl' },
-        { id: 'dropdown-month', btnId: 'btn-filter-month' },
-        { id: 'dropdown-year', btnId: 'btn-filter-year' }
-    ];
-
-    dropdowns.forEach(dd => {
-        const wrapper = document.getElementById(dd.id);
-        const trigger = document.getElementById(dd.btnId);
-        if (!wrapper || !trigger) return;
-
-        trigger.addEventListener('click', (e) => {
-            e.stopPropagation();
-            // Close all other dropdowns
-            dropdowns.forEach(other => {
-                if (other.id !== dd.id) {
-                    const el = document.getElementById(other.id);
-                    if (el) el.classList.remove('open');
-                }
-            });
-            wrapper.classList.toggle('open');
-        });
-
-        const content = wrapper.querySelector('.dropdown-content');
-        if (content) {
-            content.addEventListener('click', (e) => e.stopPropagation());
-        }
-    });
-
-    document.addEventListener('click', () => {
-        dropdowns.forEach(dd => {
-            const el = document.getElementById(dd.id);
-            if (el) el.classList.remove('open');
-        });
-    });
-
-    // Employee Type checkboxes change handler
-    const customDropdown = document.getElementById('dropdown-employee-type');
-    const checkboxes = customDropdown.querySelectorAll('input[type="checkbox"]');
-    checkboxes.forEach(cb => {
-        cb.addEventListener('change', () => {
-            const activeTypes = [];
-            checkboxes.forEach(c => {
-                if (c.checked) activeTypes.push(c.value);
-            });
-            state.filters.employeeTypes = activeTypes;
-            updateEmployeeTypeTriggerLabel();
-            checkFilterState();
-            resetPagination();
-            updateUI();
-        });
-    });
-
-    // HRBP Lead filter change listener is now handled by checkbox change events
-
-    // Gender change handler
-    document.getElementById('select-gender').addEventListener('change', (e) => {
-        state.filters.gender = e.target.value;
-        checkFilterState();
-        resetPagination();
-        updateUI();
-    });
-
-    // MoM Month & Year Filter listeners
-    const selectMoMMonthEl = document.getElementById('select-mom-month');
-    if (selectMoMMonthEl) {
-        selectMoMMonthEl.addEventListener('change', (e) => {
-            state.filters.momMonth = e.target.value;
-            state.pagination.mom.page = 1;
-            renderMoMDepartmentTable();
-        });
-    }
-    const selectMoMYearEl = document.getElementById('select-mom-year');
-    if (selectMoMYearEl) {
-        selectMoMYearEl.addEventListener('change', (e) => {
-            state.filters.momYear = e.target.value;
-            state.pagination.mom.page = 1;
-            renderMoMDepartmentTable();
-        });
-    }
-
-    // Reset Filters Button
-    const btnReset = document.getElementById('btn-reset-filters');
-    btnReset.addEventListener('click', () => {
-        state.filters.employeeTypes = ['Onroll', 'Consultant', 'Intern'];
-        state.filters.hrbpLead = ['All'];
-        state.filters.plName = ['All'];
-        state.filters.month = ['All'];
-        state.filters.gender = 'All';
-        state.filters.year = ['All'];
-        state.filters.momMonth = 'All';
-        state.filters.momYear = 'All';
-
-        checkboxes.forEach(c => c.checked = true);
-        updateEmployeeTypeTriggerLabel();
-
-        // Repopulate dynamically
-        populateDropdownFilters();
-
-        document.getElementById('select-gender').value = 'All';
-        if (selectMoMMonthEl) selectMoMMonthEl.value = 'All';
-        if (selectMoMYearEl) selectMoMYearEl.value = 'All';
-
-        btnReset.classList.add('hidden');
-        resetPagination();
-        updateUI();
-    });
-
-    // Table Searches
-    const searchMomEl = document.getElementById('search-mom-table');
-    if (searchMomEl) {
-        searchMomEl.addEventListener('input', (e) => {
-            state.search.mom = e.target.value.toLowerCase().trim();
-            state.pagination.mom.page = 1;
-            renderMoMDepartmentTable();
-        });
-    }
-
-    // Table Header Sorts
-    const sortHeaders = document.querySelectorAll('th.sortable');
-    sortHeaders.forEach(th => {
-        th.addEventListener('click', () => {
-            const column = th.getAttribute('data-sort');
-            const tableId = th.closest('table').id;
-
-            let key = '';
-            if (tableId === 'table-attrition-mom') key = 'mom';
-            else if (tableId === 'table-ff-recovery-analysis') key = 'recovery';
-            else return;
-
-            const currentSort = state.sort[key];
-            if (currentSort.column === column) {
-                currentSort.order = currentSort.order === 'asc' ? 'desc' : 'asc';
-            } else {
-                currentSort.column = column;
-                currentSort.order = 'asc';
-            }
-
-            th.closest('tr').querySelectorAll('th').forEach(sibling => {
-                sibling.classList.remove('sort-asc', 'sort-desc');
-            });
-            th.classList.add(currentSort.order === 'asc' ? 'sort-asc' : 'sort-desc');
-
-            if (state.pagination[key]) {
-                state.pagination[key].page = 1;
-            }
-
-            if (key === 'recovery') renderFFRecoveryAnalysisTable();
-            else if (key === 'mom') renderMoMDepartmentTable();
-        });
-    });
-
-    // Drawer Close trigger
-    document.getElementById('btn-close-drawer').addEventListener('click', closeDrawer);
-    document.getElementById('btn-close-drawer-overlay').addEventListener('click', closeDrawer);
-
-    // Pivot Modal Close triggers
-    document.getElementById('btn-close-pivot').addEventListener('click', closePivotModal);
-    document.getElementById('btn-close-pivot-overlay').addEventListener('click', closePivotModal);
-    document.getElementById('btn-close-pivot-footer').addEventListener('click', closePivotModal);
-    
-    const btnDownloadPivot = document.getElementById('btn-download-pivot-excel');
-    if (btnDownloadPivot) {
-        btnDownloadPivot.addEventListener('click', downloadPivotExcel);
-    }
-
-    // Pivot dropdown change listeners
-    document.getElementById('pivot-row-field').addEventListener('change', rebuildPivotTable);
-    document.getElementById('pivot-value-metric').addEventListener('change', rebuildPivotTable);
-
-    // Top exit reasons P&L dropdown change listener
-    document.getElementById('reasons-pl-select').addEventListener('change', (e) => {
-        renderTopExitReasonsList(e.target.value);
-    });
-
-    // Exit reasons tab listeners
-    const reasonsTabBtns = document.querySelectorAll('.reasons-tab-btn');
-    reasonsTabBtns.forEach(btn => {
-        btn.addEventListener('click', () => {
-            reasonsTabBtns.forEach(b => {
-                b.classList.remove('active');
-                b.style.background = 'transparent';
-                b.style.color = 'var(--color-text-muted)';
-                b.style.fontWeight = '500';
-            });
-            btn.classList.add('active');
-            btn.style.background = 'var(--color-blue-light)';
-            btn.style.color = 'var(--color-blue-accent)';
-            btn.style.fontWeight = '600';
-            state.activeReasonsTab = btn.getAttribute('data-tab');
-            renderTopExitReasonsList(document.getElementById('reasons-pl-select').value);
-        });
-    });
-
-    // Employee Exits tab listeners (Combined, Voluntary Only, Involuntary Only)
-    const empExitsTabBtns = document.querySelectorAll('.emp-exits-tab-btn');
-    empExitsTabBtns.forEach(btn => {
-        btn.addEventListener('click', () => {
-            empExitsTabBtns.forEach(b => {
-                b.classList.remove('active');
-                b.style.background = 'transparent';
-                b.style.color = 'var(--color-text-muted)';
-                b.style.fontWeight = '500';
-            });
-            btn.classList.add('active');
-            btn.style.background = 'var(--color-blue-light)';
-            btn.style.color = 'var(--color-blue-accent)';
-            btn.style.fontWeight = '600';
-            state.activeEmpExitsTab = btn.getAttribute('data-type');
-            renderEmployeeTypeMonthlyTable();
-        });
-    });
-
-    // Recovery Table search listener
-    document.getElementById('search-recovery-table').addEventListener('input', (e) => {
-        state.search.recovery = e.target.value.toLowerCase().trim();
-        renderFFRecoveryAnalysisTable();
-    });
-
-    // Sync Modal UI Setup
-    const btnSync = document.getElementById('btn-sync-data');
-    const modal = document.getElementById('sync-modal');
-    const btnCloseModal = document.getElementById('btn-close-modal');
-    const btnCloseModalOverlay = document.getElementById('btn-close-modal-overlay');
-    const btnCloseModalFooter = document.getElementById('btn-close-modal-footer');
-
-    btnSync.addEventListener('click', () => {
-        modal.setAttribute('aria-hidden', 'false');
-        document.getElementById('upload-feedback').classList.add('hidden');
-    });
-
-    const hideModal = () => modal.setAttribute('aria-hidden', 'true');
-    btnCloseModal.addEventListener('click', hideModal);
-    btnCloseModalOverlay.addEventListener('click', hideModal);
-    btnCloseModalFooter.addEventListener('click', hideModal);
-
-    // Modal Upload drag-n-drop
-    const dropZone = document.getElementById('drop-zone');
-    const fileInput = document.getElementById('file-input');
-
-    dropZone.addEventListener('click', () => fileInput.click());
-    dropZone.addEventListener('dragover', (e) => {
-        e.preventDefault();
-        dropZone.classList.add('dragover');
-    });
-    ['dragleave', 'dragend'].forEach(type => {
-        dropZone.addEventListener(type, () => dropZone.classList.remove('dragover'));
-    });
-    dropZone.addEventListener('drop', (e) => {
-        e.preventDefault();
-        dropZone.classList.remove('dragover');
-        if (e.dataTransfer.files.length) {
-            handleUploadModalFile(e.dataTransfer.files[0]);
-        }
-    });
-    fileInput.addEventListener('change', (e) => {
-        if (e.target.files.length) {
-            handleUploadModalFile(e.target.files[0]);
-        }
-    });
-
-    // Reset to demo data
-    document.getElementById('btn-reset-demo').addEventListener('click', async () => {
-        localStorage.removeItem('dash_ff_data');
-        localStorage.removeItem('dash_attrition_data');
-        localStorage.removeItem('dash_active_headcount');
-        localStorage.removeItem('dash_sync_status');
-
-        await fetchExcelData();
-        showToast('Reset back to direct Excel source data!', 'success');
-        hideModal();
-    });
-
-    // Populate Google Sheets UI when opening Sync Modal
-    btnSync.addEventListener('click', () => {
-        populateSheetsConfigUI();
-    });
-
-    // Google Sheets Method Toggle listener
-    document.getElementById('sheet-sync-method').addEventListener('change', (e) => {
-        toggleSheetMethodFields(e.target.value);
-    });
-
-    // Save & Sync Config button listener
-    document.getElementById('btn-save-sheets-config').addEventListener('click', () => {
-        saveAndSyncSheetsConfig();
-    });
-}
-
-function handleUploadModalFile(file) {
-    const feedback = document.getElementById('upload-feedback');
-    feedback.classList.add('hidden');
-
-    if (!file.name.endsWith('.xlsx') && !file.name.endsWith('.csv') && !file.name.endsWith('.json')) {
-        showUploadFeedback(false, 'Unsupported format. Please select an Excel (.xlsx), CSV or JSON file.');
-        return;
-    }
-
-    const reader = new FileReader();
-    reader.onload = (e) => {
-        try {
-            if (file.name.endsWith('.xlsx')) {
-                processExcelBuffer(e.target.result, file.name);
-            } else {
-                // Handle fallback CSV/JSON imports
-                const text = new TextDecoder('utf-8').decode(e.target.result);
-                let parsed = null;
-                if (file.name.endsWith('.json')) {
-                    parsed = JSON.parse(text);
-                    if (parsed.ffData && parsed.attritionData) {
-                        state.ffData = parsed.ffData;
-                        state.attritionData = parsed.attritionData;
-                        state.activeHeadcount = parsed.activeHeadcount || {};
-                        saveState();
-                        populateDropdownFilters();
-                        updateUI();
-                    } else {
-                        throw new Error('Composite format mismatch. Expecting ffData and attritionData keys.');
-                    }
-                } else {
-                    // Fallback to basic parse CSV placeholder
-                    throw new Error('Please select standard .xlsx Spreadsheet.');
-                }
-            }
-            showUploadFeedback(true, `Successfully uploaded and synced ${file.name}!`);
-        } catch (err) {
-            showUploadFeedback(false, `Sync Error: ${err.message}`);
-        }
-    };
-    reader.readAsArrayBuffer(file);
-}
-
-function showUploadFeedback(isSuccess, text) {
-    const alertEl = document.getElementById('upload-feedback');
-    if (alertEl) {
-        alertEl.className = `feedback-alert ${isSuccess ? 'success' : 'error'}`;
-        const textEl = alertEl.querySelector('#feedback-text');
-        if (textEl) textEl.textContent = text;
-        alertEl.classList.remove('hidden');
-    }
-    showToast(text, isSuccess ? 'success' : 'error');
-}
-
-function resetPagination() {
-    state.pagination.ff.page = 1;
-    state.pagination.attrition.page = 1;
-    state.pagination.mom.page = 1;
-}
-
-function updateEmployeeTypeTriggerLabel() {
-    const trigger = document.getElementById('btn-filter-type');
-    const types = state.filters.employeeTypes;
-    if (types.length === 3) {
-        trigger.textContent = 'All Types';
-    } else if (types.length === 0) {
-        trigger.textContent = 'None selected';
-    } else {
-        trigger.textContent = types.join(', ');
-    }
-}
-
-function checkFilterState() {
-    const btnReset = document.getElementById('btn-reset-filters');
-    const isDefault = state.filters.employeeTypes.length === 3 &&
-        state.filters.hrbpLead === 'All' &&
-        state.filters.plName === 'All' &&
-        state.filters.month === 'All' &&
-        state.filters.gender === 'All' &&
-        state.filters.year === 'All';
-    if (isDefault) {
-        btnReset.classList.add('hidden');
-    } else {
-        btnReset.classList.remove('hidden');
-    }
-}
-
-function switchTab(tabName) {
-    state.activeTab = tabName;
-    document.querySelectorAll('.tab-button').forEach(btn => {
-        btn.classList.remove('active');
-        btn.setAttribute('aria-selected', 'false');
-    });
-
-    const activeBtn = document.getElementById(`tab-${tabName}`);
-    activeBtn.classList.add('active');
-    activeBtn.setAttribute('aria-selected', 'true');
-
-    document.querySelectorAll('.dashboard-view').forEach(view => view.classList.remove('active'));
-    document.getElementById(`view-${tabName}`).classList.add('active');
-
-    setTimeout(resizeCharts, 50);
-}
-
-function resizeCharts() {
-    Object.keys(charts).forEach(key => {
-        if (charts[key]) charts[key].resize();
-    });
-}
-
-// ==========================================================================
-// FILTERING ENGINES
-// ==========================================================================
-function getFilteredFF() {
-    return state.ffData.filter(item => {
-        if (item.clearanceStatus === 'Admin Hold' || item.clearanceStatus === 'Disputed') return false;
-        const typeMatch = state.filters.employeeTypes.includes(item.employeeType);
-        const hrbpMatch = state.filters.hrbpLead.includes('All') || state.filters.hrbpLead.includes(item.hrbpLead);
-        const plMatch = state.filters.plName.includes('All') || state.filters.plName.includes(item.plName);
-        const monthMatch = state.filters.month.includes('All') || state.filters.month.includes(item.month);
-        const genderMatch = state.filters.gender === 'All' || item.gender === state.filters.gender;
-        const yearMatch = state.filters.year.includes('All') || (item.lastWorkingDay && state.filters.year.some(y => item.lastWorkingDay.startsWith(y)));
-        return typeMatch && hrbpMatch && plMatch && monthMatch && genderMatch && yearMatch;
-    });
-}
-
-function getFilteredFFIgnoringMonth() {
-    return state.ffData.filter(item => {
-        if (item.clearanceStatus === 'Admin Hold' || item.clearanceStatus === 'Disputed') return false;
-        const typeMatch = state.filters.employeeTypes.includes(item.employeeType);
-        const hrbpMatch = state.filters.hrbpLead.includes('All') || state.filters.hrbpLead.includes(item.hrbpLead);
-        const plMatch = state.filters.plName.includes('All') || state.filters.plName.includes(item.plName);
-        const genderMatch = state.filters.gender === 'All' || item.gender === state.filters.gender;
-        const yearMatch = state.filters.year.includes('All') || (item.lastWorkingDay && state.filters.year.some(y => item.lastWorkingDay.startsWith(y)));
-        return typeMatch && hrbpMatch && plMatch && genderMatch && yearMatch;
-    });
-}
-
-function getFilteredAttrition() {
-    return state.attritionData.filter(item => {
-        const typeMatch = state.filters.employeeTypes.includes(item.employeeType);
-        const hrbpMatch = state.filters.hrbpLead.includes('All') || state.filters.hrbpLead.includes(item.hrbpLead);
-        const plMatch = state.filters.plName.includes('All') || state.filters.plName.includes(item.plName);
-        const monthMatch = state.filters.month.includes('All') || state.filters.month.includes(item.month);
-        const genderMatch = state.filters.gender === 'All' || item.gender === state.filters.gender;
-        const yearMatch = state.filters.year.includes('All') || (item.exitDate && state.filters.year.some(y => item.exitDate.startsWith(y)));
-        return typeMatch && hrbpMatch && plMatch && monthMatch && genderMatch && yearMatch;
-    });
-}
-
-function getFilteredAttritionIgnoringMonth() {
-    return state.attritionData.filter(item => {
-        const typeMatch = state.filters.employeeTypes.includes(item.employeeType);
-        const hrbpMatch = state.filters.hrbpLead.includes('All') || state.filters.hrbpLead.includes(item.hrbpLead);
-        const plMatch = state.filters.plName.includes('All') || state.filters.plName.includes(item.plName);
-        const genderMatch = state.filters.gender === 'All' || item.gender === state.filters.gender;
-        const yearMatch = state.filters.year.includes('All') || (item.exitDate && state.filters.year.some(y => item.exitDate.startsWith(y)));
-        return typeMatch && hrbpMatch && plMatch && genderMatch && yearMatch;
-    });
-}
-
-// ==========================================================================
-// FILTER DROPDOWNS POPULATION
-// ==========================================================================
-// Helper to default filters to the latest year and month present in the dataset
-function setDefaultFiltersToLatest() {
-    const years = new Set();
-    state.ffData.forEach(item => {
-        if (item.lastWorkingDay) {
-            const yr = item.lastWorkingDay.substring(0, 4);
-            if (yr && /^\d{4}$/.test(yr)) years.add(yr);
-        }
-    });
-    state.attritionData.forEach(item => {
-        if (item.exitDate) {
-            const yr = item.exitDate.substring(0, 4);
-            if (yr && /^\d{4}$/.test(yr)) years.add(yr);
-        }
-    });
-
-    if (years.size === 0) return;
-
-    // Find latest year
-    const sortedYears = Array.from(years).sort();
-    const latestYear = sortedYears[sortedYears.length - 1];
-
-    // Find latest month in that year
-    const monthOrder = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
-    const monthsInLatestYear = new Set();
-
-    state.ffData.forEach(item => {
-        if (item.lastWorkingDay && item.lastWorkingDay.startsWith(latestYear) && item.month) {
-            monthsInLatestYear.add(item.month);
-        }
-    });
-    state.attritionData.forEach(item => {
-        if (item.exitDate && item.exitDate.startsWith(latestYear) && item.month) {
-            monthsInLatestYear.add(item.month);
-        }
-    });
-
-    let latestMonth = 'All';
-    if (monthsInLatestYear.size > 0) {
-        const sortedMonths = Array.from(monthsInLatestYear).sort((a, b) => monthOrder.indexOf(a) - monthOrder.indexOf(b));
-        latestMonth = sortedMonths[sortedMonths.length - 1];
-    }
-
-    state.filters.year = [latestYear];
-    state.filters.month = [latestMonth];
-}
-
-function populateDropdownFilters() {
-    // HRBP Leads select dropdown is replaced by checkbox custom dropdown
-
-    const selectMoMMonth = document.getElementById('select-mom-month');
-    const selectMoMYear = document.getElementById('select-mom-year');
-
-    const prevMoMMonth = selectMoMMonth ? selectMoMMonth.value : 'All';
-    const prevMoMYear = selectMoMYear ? selectMoMYear.value : 'All';
-
-    const leads = new Set();
-    const pls = new Set();
-    const months = new Set();
-    const years = new Set();
-
-    state.ffData.forEach(item => {
-        if (item.hrbpLead) leads.add(item.hrbpLead);
-        if (item.plName) pls.add(item.plName);
-        if (item.month) months.add(item.month);
-        if (item.lastWorkingDay) {
-            const yr = item.lastWorkingDay.substring(0, 4);
-            if (yr && /^\d{4}$/.test(yr)) years.add(yr);
-        }
-    });
-
-    state.attritionData.forEach(item => {
-        if (item.hrbpLead) leads.add(item.hrbpLead);
-        if (item.plName) pls.add(item.plName);
-        if (item.month) months.add(item.month);
-        if (item.exitDate) {
-            const yr = item.exitDate.substring(0, 4);
-            if (yr && /^\d{4}$/.test(yr)) years.add(yr);
-        }
-    });
-
-    if (years.size === 0) {
-        years.add('2025');
-        years.add('2026');
-    }
-
-    // --- Dynamic Checkbox lists ---
-
-    // 0. HRBP Lead dropdown
-    const hrbpContent = document.getElementById('dropdown-hrbp-content');
-    if (hrbpContent) {
-        hrbpContent.innerHTML = '';
-        const allChecked = state.filters.hrbpLead.includes('All') ? 'checked' : '';
-        hrbpContent.innerHTML += `
-            <label class="dropdown-option">
-                <input type="checkbox" id="chk-hrbp-all" value="All" ${allChecked}> <em>All Leads</em>
-            </label>
-        `;
-
-        // Only include actual hrbp leads (filtering out Unassigned if not needed, but keep sorted unique leads)
-        const sortedLeads = Array.from(leads).filter(l => l !== 'Unassigned').sort();
-
-        sortedLeads.forEach(lead => {
-            const checked = (state.filters.hrbpLead.includes('All') || state.filters.hrbpLead.includes(lead)) ? 'checked' : '';
-            hrbpContent.innerHTML += `
-                <label class="dropdown-option">
-                    <input type="checkbox" name="chk-hrbp" value="${lead}" ${checked}> ${lead}
-                </label>
-            `;
-        });
-
-        const allCb = document.getElementById('chk-hrbp-all');
-        const itemCbs = hrbpContent.querySelectorAll('input[name="chk-hrbp"]');
-
-        allCb.addEventListener('change', () => {
-            if (allCb.checked) {
-                itemCbs.forEach(cb => cb.checked = true);
-                state.filters.hrbpLead = ['All'];
-            } else {
-                itemCbs.forEach(cb => cb.checked = false);
-                state.filters.hrbpLead = [];
-            }
-            updateHRBPTriggerLabel();
-            checkFilterState();
-            resetPagination();
-            updateUI();
-        });
-
-        itemCbs.forEach(cb => {
-            cb.addEventListener('change', () => {
-                if (!cb.checked) {
-                    allCb.checked = false;
-                }
-                const active = [];
-                itemCbs.forEach(c => {
-                    if (c.checked) active.push(c.value);
-                });
-                if (active.length === itemCbs.length) {
-                    allCb.checked = true;
-                    state.filters.hrbpLead = ['All'];
-                } else {
-                    state.filters.hrbpLead = active;
-                }
-                updateHRBPTriggerLabel();
-                checkFilterState();
-                resetPagination();
-                updateUI();
-            });
-        });
-        updateHRBPTriggerLabel();
-    }
-
-    // 1. P&L Name (Departments)
-    const plContent = document.getElementById('dropdown-pl-content');
-    if (plContent) {
-        plContent.innerHTML = '';
-        const allChecked = state.filters.plName.includes('All') ? 'checked' : '';
-        plContent.innerHTML += `
-            <label class="dropdown-option">
-                <input type="checkbox" id="chk-pl-all" value="All" ${allChecked}> <em>All P&L</em>
-            </label>
-        `;
-        Array.from(pls).sort().forEach(pl => {
-            const checked = (state.filters.plName.includes('All') || state.filters.plName.includes(pl)) ? 'checked' : '';
-            plContent.innerHTML += `
-                <label class="dropdown-option">
-                    <input type="checkbox" name="chk-pl" value="${pl}" ${checked}> ${pl}
-                </label>
-            `;
-        });
-
-        const allCb = document.getElementById('chk-pl-all');
-        const itemCbs = plContent.querySelectorAll('input[name="chk-pl"]');
-
-        allCb.addEventListener('change', () => {
-            if (allCb.checked) {
-                itemCbs.forEach(cb => cb.checked = true);
-                state.filters.plName = ['All'];
-            } else {
-                itemCbs.forEach(cb => cb.checked = false);
-                state.filters.plName = [];
-            }
-            updatePLTriggerLabel();
-            checkFilterState();
-            resetPagination();
-            updateUI();
-        });
-
-        itemCbs.forEach(cb => {
-            cb.addEventListener('change', () => {
-                if (!cb.checked) {
-                    allCb.checked = false;
-                }
-                const active = [];
-                itemCbs.forEach(c => {
-                    if (c.checked) active.push(c.value);
-                });
-                if (active.length === itemCbs.length) {
-                    allCb.checked = true;
-                    state.filters.plName = ['All'];
-                } else {
-                    state.filters.plName = active;
-                }
-                updatePLTriggerLabel();
-                checkFilterState();
-                resetPagination();
-                updateUI();
-            });
-        });
-        updatePLTriggerLabel();
-    }
-
-    // 2. Year dropdown
-    const yearContent = document.getElementById('dropdown-year-content');
-    const sortedYears = Array.from(years).sort();
-    if (yearContent) {
-        yearContent.innerHTML = '';
-        const allChecked = state.filters.year.includes('All') ? 'checked' : '';
-        yearContent.innerHTML += `
-            <label class="dropdown-option">
-                <input type="checkbox" id="chk-year-all" value="All" ${allChecked}> <em>All Years</em>
-            </label>
-        `;
-        sortedYears.forEach(y => {
-            const checked = (state.filters.year.includes('All') || state.filters.year.includes(y)) ? 'checked' : '';
-            yearContent.innerHTML += `
-                <label class="dropdown-option">
-                    <input type="checkbox" name="chk-year" value="${y}" ${checked}> ${y}
-                </label>
-            `;
-        });
-
-        const allCb = document.getElementById('chk-year-all');
-        const itemCbs = yearContent.querySelectorAll('input[name="chk-year"]');
-
-        allCb.addEventListener('change', () => {
-            if (allCb.checked) {
-                itemCbs.forEach(cb => cb.checked = true);
-                state.filters.year = ['All'];
-            } else {
-                itemCbs.forEach(cb => cb.checked = false);
-                state.filters.year = [];
-            }
-            populateDropdownFilters(); // dynamically filters month dropdown list!
-            updateYearTriggerLabel();
-            checkFilterState();
-            resetPagination();
-            updateUI();
-        });
-
-        itemCbs.forEach(cb => {
-            cb.addEventListener('change', () => {
-                if (!cb.checked) {
-                    allCb.checked = false;
-                }
-                const active = [];
-                itemCbs.forEach(c => {
-                    if (c.checked) active.push(c.value);
-                });
-                if (active.length === itemCbs.length) {
-                    allCb.checked = true;
-                    state.filters.year = ['All'];
-                } else {
-                    state.filters.year = active;
-                }
-                populateDropdownFilters(); // dynamically filters month dropdown list!
-                updateYearTriggerLabel();
-                checkFilterState();
-                resetPagination();
-                updateUI();
-            });
-        });
-        updateYearTriggerLabel();
-    }
-
-    // 3. Month dropdown (filtered by selected year)
-    const monthContent = document.getElementById('dropdown-month-content');
-    const monthOrder = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
-    if (monthContent) {
-        monthContent.innerHTML = '';
-
-        // Hide months after June if ONLY 2026 is selected
-        const is2026OnlySelected = state.filters.year.length === 1 && state.filters.year.includes(String(new Date().getFullYear()));
-        let displayMonths = Array.from(months);
-        if (is2026OnlySelected) {
-            const maxMonthIdx = new Date().getMonth(); // 5 for June
-            displayMonths = displayMonths.filter(m => {
-                const idx = monthOrder.indexOf(m);
-                return idx !== -1 && idx <= maxMonthIdx;
-            });
-        }
-
-        const sortedMonths = displayMonths.sort((a, b) => monthOrder.indexOf(a) - monthOrder.indexOf(b));
-        const allChecked = state.filters.month.includes('All') ? 'checked' : '';
-        monthContent.innerHTML += `
-            <label class="dropdown-option">
-                <input type="checkbox" id="chk-month-all" value="All" ${allChecked}> <em>All Months</em>
-            </label>
-        `;
-        sortedMonths.forEach(m => {
-            const checked = (state.filters.month.includes('All') || state.filters.month.includes(m)) ? 'checked' : '';
-            monthContent.innerHTML += `
-                <label class="dropdown-option">
-                    <input type="checkbox" name="chk-month" value="${m}" ${checked}> ${m}
-                </label>
-            `;
-        });
-
-        const allCb = document.getElementById('chk-month-all');
-        const itemCbs = monthContent.querySelectorAll('input[name="chk-month"]');
-
-        allCb.addEventListener('change', () => {
-            if (allCb.checked) {
-                itemCbs.forEach(cb => cb.checked = true);
-                state.filters.month = ['All'];
-            } else {
-                itemCbs.forEach(cb => cb.checked = false);
-                state.filters.month = [];
-            }
-            updateMonthTriggerLabel();
-            checkFilterState();
-            resetPagination();
-            updateUI();
-        });
-
-        itemCbs.forEach(cb => {
-            cb.addEventListener('change', () => {
-                if (!cb.checked) {
-                    allCb.checked = false;
-                }
-                const active = [];
-                itemCbs.forEach(c => {
-                    if (c.checked) active.push(c.value);
-                });
-                if (active.length === itemCbs.length) {
-                    allCb.checked = true;
-                    state.filters.month = ['All'];
-                } else {
-                    state.filters.month = active;
-                }
-                updateMonthTriggerLabel();
-                checkFilterState();
-                resetPagination();
-                updateUI();
-            });
-        });
-        updateMonthTriggerLabel();
-    }
-
-    // MoM select options
-    if (selectMoMMonth) {
-        const sortedMonthsAll = Array.from(months).sort((a, b) => monthOrder.indexOf(a) - monthOrder.indexOf(b));
-        selectMoMMonth.innerHTML = '<option value="All">All Months</option>';
-        sortedMonthsAll.forEach(m => {
-            selectMoMMonth.innerHTML += `<option value="${m}">${m}</option>`;
-        });
-        if (sortedMonthsAll.includes(prevMoMMonth)) selectMoMMonth.value = prevMoMMonth;
-    }
-
-    if (selectMoMYear) {
-        selectMoMYear.innerHTML = '<option value="All">All Years</option>';
-        sortedYears.forEach(y => {
-            selectMoMYear.innerHTML += `<option value="${y}">${y}</option>`;
-        });
-        if (sortedYears.includes(prevMoMYear)) selectMoMYear.value = prevMoMYear;
-    }
-}
-
-// Trigger text helpers for multi-select checklists
-function updateMultiselectTriggerLabel(triggerId, selectedList, allCount, defaultLabel) {
-    const trigger = document.getElementById(triggerId);
-    if (!trigger) return;
-    if (selectedList.includes('All') || selectedList.length === allCount) {
-        trigger.textContent = defaultLabel;
-    } else if (selectedList.length === 0) {
-        trigger.textContent = 'None selected';
-    } else {
-        // Show count if list is long, else list names
-        if (selectedList.length > 2) {
-            trigger.textContent = `${selectedList.length} Selected`;
-        } else {
-            trigger.textContent = selectedList.join(', ');
-        }
-    }
-}
-
-function updatePLTriggerLabel() {
-    const count = document.querySelectorAll('input[name="chk-pl"]').length;
-    updateMultiselectTriggerLabel('btn-filter-pl', state.filters.plName, count, 'All P&L');
-}
-
-function updateHRBPTriggerLabel() {
-    const count = document.querySelectorAll('input[name="chk-hrbp"]').length;
-    updateMultiselectTriggerLabel('btn-filter-hrbp', state.filters.hrbpLead, count, 'All Leads');
-}
-
-function updateMonthTriggerLabel() {
-    const count = document.querySelectorAll('input[name="chk-month"]').length;
-    updateMultiselectTriggerLabel('btn-filter-month', state.filters.month, count, 'All Months');
-}
-
-function updateYearTriggerLabel() {
-    const count = document.querySelectorAll('input[name="chk-year"]').length;
-    updateMultiselectTriggerLabel('btn-filter-year', state.filters.year, count, 'All Years');
-}
-
-// ==========================================================================
-// RENDER UI & DATA PIPELINE
-// ==========================================================================
-function updateUI() {
-    calculateFFMetrics();
-    calculateAttritionMetrics();
-
-    renderFFPayoutPLTable();
-    renderAttritionTypeTable();
-    renderMonthlyAttritionRateTable();
-    renderEmployeeTypeMonthlyTable();
-    renderDemographicsBreakdown();
-    renderFFRecoveryAnalysisTable();
-
-    // Populate reasons P&L select options and update list
-    populateReasonsPlDropdown();
-    const reasonsPlSelect = document.getElementById('reasons-pl-select');
-    renderTopExitReasonsList(reasonsPlSelect ? reasonsPlSelect.value : 'All');
-
-    renderFFCharts();
-    renderAttritionCharts();
-}
-
-// ==========================================================================
-// METRICS ENGINE (KPI & BUCKETS SUMMARY)
-// ==========================================================================
-function calculateFFMetrics() {
-    const data = getFilteredFF();
-    const total = data.length;
-    const pending = data.filter(d => d.clearanceStatus === 'In Progress').length;
-    const settled = data.filter(d => d.clearanceStatus === 'Settled').length;
-
-    // Filtered Payable vs Recovery sums
-    const payablePayout = data
-        .filter(d => d.paymentType === 'Payable')
-        .reduce((sum, item) => sum + (item.settlementAmount || 0), 0);
-    const recoveryAmount = data
-        .filter(d => d.paymentType === 'Recovery')
-        .reduce((sum, item) => sum + (item.settlementAmount || 0), 0);
-
-    // Bind to cards
-    const elFfTotal = document.getElementById('kpi-ff-total');
-    if (elFfTotal) elFfTotal.textContent = total.toLocaleString();
-
-    const elSummaryTotal = document.getElementById('lbl-summary-total');
-    if (elSummaryTotal) elSummaryTotal.textContent = total.toLocaleString();
-
-    const elSummarySettled = document.getElementById('lbl-summary-settled');
-    if (elSummarySettled) elSummarySettled.textContent = settled.toLocaleString();
-
-    const elSummaryPending = document.getElementById('lbl-summary-pending');
-    if (elSummaryPending) elSummaryPending.textContent = pending.toLocaleString();
-
-    const payoutEl = document.getElementById('kpi-ff-payout');
-    if (payoutEl) {
-        payoutEl.innerHTML = `
-            <span style="font-size: 1.125rem; font-weight:600; color:var(--status-success-text);">P: ₹${Math.round(payablePayout / 1000).toLocaleString()}k</span>
-            <span style="font-size: 1.125rem; font-weight:600; color:var(--status-danger-text); margin-left: 0.5rem;">R: ₹${Math.round(recoveryAmount / 1000).toLocaleString()}k</span>
-        `;
-    }
-
-    // Average TAT
-    const ageingValues = data.map(d => d.ageing).filter(v => v !== undefined && v !== null && !isNaN(v));
-    const avgAgeing = ageingValues.length > 0 ? (ageingValues.reduce((sum, v) => sum + v, 0) / ageingValues.length) : 0;
-    const avgTatEl = document.getElementById('kpi-ff-avg-tat');
-    if (avgTatEl) {
-        avgTatEl.textContent = `${avgAgeing.toFixed(1)}d`;
-    }
-}
-
-function calculateAttritionMetrics() {
-    const exits = getFilteredAttrition();
-    const totalExits = exits.length;
-
-    // Headcount Map
-    let filteredHeadcount = 0;
-    if (state.filters.plName.includes('All')) {
-        filteredHeadcount = Object.values(state.activeHeadcount).reduce((sum, c) => sum + c, 0);
-    } else {
-        state.filters.plName.forEach(pl => {
-            filteredHeadcount += (state.activeHeadcount[pl] || 0);
-        });
-    }
-
-    const rate = filteredHeadcount > 0 ? ((totalExits / filteredHeadcount) * 100).toFixed(1) : '0.0';
-
-    // Regrettable Exits
-    const regrettableCount = exits.filter(e => e.isRegrettable).length;
-    const regrettableRate = totalExits > 0 ? ((regrettableCount / totalExits) * 100).toFixed(1) : '0.0';
-
-    // Avg Tenure
-    const avgTenure = totalExits > 0
-        ? Math.round(exits.reduce((sum, item) => sum + (item.tenureMonths || 0), 0) / totalExits)
-        : 0;
-
-    // Dropout cases (Tenure < 90 Days)
-    const dropouts = exits.filter(e => e.isDropout).length;
-    const dropoutRate = totalExits > 0 ? ((dropouts / totalExits) * 100).toFixed(1) : '0.0';
-
-    // Bind cards safely
-    const elTotal = document.getElementById('kpi-attrition-total');
-    if (elTotal) elTotal.textContent = totalExits.toLocaleString();
-
-    const elRate = document.getElementById('kpi-attrition-rate');
-    if (elRate) elRate.textContent = `${rate}%`;
-
-    const elRegret = document.getElementById('kpi-attrition-regret');
-    if (elRegret) elRegret.textContent = `${regrettableRate}%`;
-
-    const elTenure = document.getElementById('kpi-attrition-tenure');
-    if (elTenure) elTenure.textContent = `${avgTenure} mo`;
-
-    const elDropout = document.getElementById('kpi-attrition-dropout');
-    if (elDropout) elDropout.textContent = `${dropouts} (${dropoutRate}%)`;
-}
-
-// ==========================================================================
-// TABULAR DATA & PAGINATION RENDERERS
-// ==========================================================================
-function sortData(data, sortState) {
-    if (!sortState.column) return data;
-    return [...data].sort((a, b) => {
-        let valA = a[sortState.column];
-        let valB = b[sortState.column];
-
-        if (valA === undefined || valA === null) valA = '';
-        if (valB === undefined || valB === null) valB = '';
-
-        if (typeof valA === 'string') {
-            return sortState.order === 'asc' ? valA.localeCompare(valB) : valB.localeCompare(valA);
-        } else {
-            return sortState.order === 'asc' ? valA - valB : valB - valA;
-        }
-    });
-}
-
-function setupPaginationControls(key, totalCount, renderFn) {
-    const pag = state.pagination[key];
-    const totalPages = Math.max(1, Math.ceil(totalCount / pag.size));
-    if (pag.page > totalPages) pag.page = totalPages;
-
-    const tableEl = document.getElementById(`table-${key}-registry`) ||
-        document.getElementById(`table-attrition-${key}`) ||
-        document.getElementById(`table-ff-${key}`) ||
-        document.getElementById(key) ||
-        document.getElementById(`table-${key}`);
-    if (!tableEl) return;
-
-    const container = tableEl.closest('.table-section') || tableEl.closest('.compact-table-card');
-    if (!container) return;
-
-    const footer = container.querySelector('.table-footer') || container.querySelector('.table-footer-compact');
-    if (!footer) return;
-
-    let controls = footer.querySelector('.pagination-controls');
-    if (!controls) {
-        controls = document.createElement('div');
-        controls.className = 'pagination-controls';
-        footer.appendChild(controls);
-    }
-
-    controls.innerHTML = `
-        <button class="btn-pagination" id="btn-${key}-prev" ${pag.page === 1 ? 'disabled' : ''}>Prev</button>
-        <span class="pagination-info">Page ${pag.page} of ${totalPages}</span>
-        <button class="btn-pagination" id="btn-${key}-next" ${pag.page === totalPages ? 'disabled' : ''}>Next</button>
-    `;
-
-    controls.querySelector(`#btn-${key}-prev`).onclick = () => {
-        if (pag.page > 1) {
-            pag.page--;
-            renderFn();
-        }
-    };
-    controls.querySelector(`#btn-${key}-next`).onclick = () => {
-        if (pag.page < totalPages) {
-            pag.page++;
-            renderFn();
-        }
-    };
-}
-
-
-
-// MoM exits count and % by department table
-function renderMonthlyAttritionRateTable() {
-    const exits = getFilteredAttritionIgnoringMonth();
-
-    // Group exits by YYYY-MM
-    const monthlyExits = {};
-    exits.forEach(e => {
-        if (!e.exitDate) return;
-        const yyyymm = e.exitDate.substring(0, 7); // "YYYY-MM"
-        monthlyExits[yyyymm] = (monthlyExits[yyyymm] || 0) + 1;
-    });
-
-    // Sort the year-months chronologically
-    const sortedYM = Object.keys(monthlyExits).sort();
-
-    // Get current filtered starting headcount (active headcount TODAY)
-    let finalHeadcount = 0;
-    if (state.filters.plName.includes('All')) {
-        finalHeadcount = Object.values(state.activeHeadcount).reduce((sum, c) => sum + c, 0);
-    } else {
-        state.filters.plName.forEach(pl => {
-            finalHeadcount += (state.activeHeadcount[pl] || 0);
-        });
-    }
-
-    // Reconstruction: calculate starting headcount for each month working backwards
-    const tableRows = [];
-    let currentHeadcount = finalHeadcount;
-
-    for (let i = sortedYM.length - 1; i >= 0; i--) {
-        const ym = sortedYM[i];
-        const exitCount = monthlyExits[ym] || 0;
-        const startHeadcount = currentHeadcount + exitCount;
-
-        const [year, monthNum] = ym.split('-');
-        const dateObj = new Date(parseInt(year), parseInt(monthNum) - 1, 1);
-        const monthLabel = dateObj.toLocaleString('default', { month: 'long', year: 'numeric' });
-
-        const rate = startHeadcount > 0 ? ((exitCount / startHeadcount) * 100).toFixed(1) : '0.0';
-
-        tableRows.unshift({
-            monthLabel,
-            startHeadcount,
-            exitCount,
-            rate
-        });
-
-        currentHeadcount = startHeadcount;
-    }
-
-    const tbody = document.getElementById('tbody-attrition-monthly-rate');
-    if (!tbody) return;
-    tbody.innerHTML = '';
-
-    tableRows.forEach(row => {
-        const tr = document.createElement('tr');
-        tr.innerHTML = `
-            <td><strong>${row.monthLabel}</strong></td>
-            <td class="align-right">${row.startHeadcount.toLocaleString()}</td>
-            <td class="align-right">${row.exitCount.toLocaleString()}</td>
-            <td class="align-right" style="font-weight: 600; color: var(--color-blue-primary);">${row.rate}%</td>
-        `;
-        tbody.appendChild(tr);
-    });
-}
-
-function renderEmployeeTypeMonthlyTable() {
-    const exits = getFilteredAttritionIgnoringMonth();
-
-    let filteredExits = exits;
-    if (state.activeEmpExitsTab === 'voluntary') {
-        filteredExits = exits.filter(e => e.exitType === 'Voluntary');
-    } else if (state.activeEmpExitsTab === 'involuntary') {
-        filteredExits = exits.filter(e => e.exitType === 'Involuntary');
-    }
-
-    const typeMonthCounts = {
-        'Onroll': {},
-        'Consultant': {},
-        'Intern': {}
-    };
-
-    const allMonthsSet = new Set();
-    filteredExits.forEach(e => {
-        if (!e.exitDate) return;
-        const ym = e.exitDate.substring(0, 7);
-        allMonthsSet.add(ym);
-        const type = e.employeeType;
-        if (typeMonthCounts[type] !== undefined) {
-            typeMonthCounts[type][ym] = (typeMonthCounts[type][ym] || 0) + 1;
-        }
-    });
-
-    const sortedMonths = Array.from(allMonthsSet).sort();
-
-    const theadRow = document.getElementById('thead-row-emp-type-exits');
-    if (theadRow) {
-        theadRow.innerHTML = '<th>Employee Type</th>';
-        sortedMonths.forEach(ym => {
-            const [year, monthNum] = ym.split('-');
-            const dateObj = new Date(parseInt(year), parseInt(monthNum) - 1, 1);
-            const monthLabel = dateObj.toLocaleString('default', { month: 'short', year: 'numeric' });
-            theadRow.innerHTML += `<th class="align-right">${monthLabel}</th>`;
-        });
-        theadRow.innerHTML += '<th class="align-right">Total</th>';
-    }
-
-    const tbody = document.getElementById('tbody-emp-type-monthly-exits');
-    if (!tbody) return;
-    tbody.innerHTML = '';
-
-    const types = ['Onroll', 'Consultant', 'Intern'];
-    const colTotals = {};
-    sortedMonths.forEach(ym => { colTotals[ym] = 0; });
-    let grandTotal = 0;
-
-    types.forEach(type => {
-        const tr = document.createElement('tr');
-        tr.innerHTML = `<td><strong>${type}</strong></td>`;
-        let rowTotal = 0;
-
-        sortedMonths.forEach(ym => {
-            const count = typeMonthCounts[type][ym] || 0;
-            tr.innerHTML += `<td class="align-right">${count.toLocaleString()}</td>`;
-            rowTotal += count;
-            colTotals[ym] += count;
-        });
-
-        tr.innerHTML += `<td class="align-right" style="font-weight:600;">${rowTotal.toLocaleString()}</td>`;
-        grandTotal += rowTotal;
-        tbody.appendChild(tr);
-    });
-
-    const totalTr = document.createElement('tr');
-    totalTr.style.borderTop = '2px solid var(--color-border)';
-    totalTr.innerHTML = '<td><strong>Total Exits</strong></td>';
-
-    sortedMonths.forEach(ym => {
-        totalTr.innerHTML += `<td class="align-right" style="font-weight:600;">${colTotals[ym].toLocaleString()}</td>`;
-    });
-    totalTr.innerHTML += `<td class="align-right" style="font-weight:700; color:var(--color-blue-primary);">${grandTotal.toLocaleString()}</td>`;
-    tbody.appendChild(totalTr);
-}
-
-function renderDemographicsBreakdown() {
-    const exits = getFilteredAttrition();
-    const totalExits = exits.length;
-
-    // 1. Region doughnut
-    const regionCounts = { 'North': 0, 'South': 0, 'East': 0, 'West': 0 };
-    exits.forEach(e => {
-        const reg = e.region || 'Unassigned';
-        if (regionCounts[reg] !== undefined) {
-            regionCounts[reg]++;
-        } else {
-            regionCounts[reg] = (regionCounts[reg] || 0) + 1;
-        }
-    });
-
-    const regionData = Object.values(regionCounts);
-    const regionLabels = Object.keys(regionCounts).map(k => {
-        const count = regionCounts[k];
-        const pct = totalExits > 0 ? ((count / totalExits) * 100).toFixed(1) : '0.0';
-        return `${k}: ${count} (${pct}%)`;
-    });
-
-    const ctxRegion = document.getElementById('chart-attrition-region').getContext('2d');
-    if (charts.attritionRegion) charts.attritionRegion.destroy();
-    charts.attritionRegion = new Chart(ctxRegion, {
-        type: 'doughnut',
-        data: {
-            labels: regionLabels,
-            datasets: [{
-                data: regionData,
-                backgroundColor: ['#FF6F61', '#1A1A1A', '#AEAEAE', '#4A90E2'],
-                borderWidth: 1.5,
-                borderColor: '#ffffff'
-            }]
-        },
-        options: {
-            ...commonChartOptions,
-            cutout: '70%'
-        }
-    });
-
-    // 2. Gender doughnut
-    const genderCounts = {};
-    exits.forEach(e => {
-        const g = e.gender || 'Unassigned';
-        genderCounts[g] = (genderCounts[g] || 0) + 1;
-    });
-
-    const genderLabels = Object.keys(genderCounts).map(k => {
-        const count = genderCounts[k];
-        const pct = totalExits > 0 ? ((count / totalExits) * 100).toFixed(1) : '0.0';
-        return `${k}: ${count} (${pct}%)`;
-    });
-
-    const ctxGender = document.getElementById('chart-attrition-gender').getContext('2d');
-    if (charts.attritionGender) charts.attritionGender.destroy();
-    charts.attritionGender = new Chart(ctxGender, {
-        type: 'doughnut',
-        data: {
-            labels: genderLabels,
-            datasets: [{
-                data: Object.values(genderCounts),
-                backgroundColor: ['#FF6F61', '#1A1A1A', '#AEAEAE', '#4A90E2'],
-                borderWidth: 1.5,
-                borderColor: '#ffffff'
-            }]
-        },
-        options: {
-            ...commonChartOptions,
-            cutout: '70%'
-        }
-    });
-
-    // 3. Grade table
-    const gradeCounts = {};
-    exits.forEach(e => {
-        const g = e.grade || 'Unassigned';
-        gradeCounts[g] = (gradeCounts[g] || 0) + 1;
-    });
-    const gradeList = Object.keys(gradeCounts).map(g => ({
-        grade: g,
-        count: gradeCounts[g],
-        pct: totalExits > 0 ? ((gradeCounts[g] / totalExits) * 100).toFixed(1) : '0.0'
-    })).sort((a, b) => b.count - a.count);
-
-    const tbodyGrade = document.getElementById('tbody-attrition-grade');
-    if (tbodyGrade) {
-        tbodyGrade.innerHTML = '';
-        gradeList.forEach(item => {
-            const row = document.createElement('tr');
-            row.innerHTML = `
-                <td><strong>${item.grade}</strong></td>
-                <td class="align-right">${item.count}</td>
-                <td class="align-right">${item.pct}%</td>
-            `;
-            tbodyGrade.appendChild(row);
-        });
-    }
-
-    // 4. Top reasons table
-    const reasonCounts = {};
-    exits.forEach(e => {
-        const r = e.reasonForLeaving || 'Unassigned';
-        reasonCounts[r] = (reasonCounts[r] || 0) + 1;
-    });
-    const reasonList = Object.keys(reasonCounts).map(r => ({
-        reason: r,
-        count: reasonCounts[r],
-        pct: totalExits > 0 ? ((reasonCounts[r] / totalExits) * 100).toFixed(1) : '0.0'
-    })).sort((a, b) => b.count - a.count);
-
-    const tbodyReasons = document.getElementById('tbody-attrition-reasons-total');
-    if (tbodyReasons) {
-        tbodyReasons.innerHTML = '';
-        reasonList.forEach(item => {
-            const row = document.createElement('tr');
-            row.innerHTML = `
-                <td><strong>${item.reason}</strong></td>
-                <td class="align-right">${item.count}</td>
-                <td class="align-right">${item.pct}%</td>
-            `;
-            tbodyReasons.appendChild(row);
-        });
-    }
-}
-
-// ==========================================================================
-// DETAIL DRAWER
-// ==========================================================================
-function openDrawer(employeeId) {
-    const item = state.ffData.find(d => d.employeeId === employeeId);
-    if (!item) return;
-
-    document.getElementById('drawer-title').textContent = 'F&F Clearance Details';
-    document.getElementById('drawer-subtitle').textContent = 'Case Details';
-    document.getElementById('drawer-emp-pl').textContent = item.plName;
-    document.getElementById('drawer-emp-lwd').textContent = item.lastWorkingDay;
-    document.getElementById('drawer-payout-val').textContent = `₹${Number(item.settlementAmount).toLocaleString('en-IN')}`;
-
-    const payoutDateEl = document.getElementById('drawer-payout-date');
-    payoutDateEl.textContent = item.payoutDate;
-    if (item.clearanceStatus === 'Settled') {
-        payoutDateEl.className = 'status-tag settled';
-    } else {
-        payoutDateEl.className = 'status-tag in-progress';
-    }
-
-    const chk = item.clearanceChecklist || {};
-    const checklistKeys = ['itAssets', 'finance', 'hr', 'admin'];
-    let clearedCount = 0;
-
-    const idMap = {
-        itAssets: 'chk-it-status',
-        finance: 'chk-finance-status',
-        hr: 'chk-hr-status',
-        admin: 'chk-admin-status'
-    };
-
-    checklistKeys.forEach(key => {
-        const val = chk[key] || 'Pending';
-        const badge = document.getElementById(idMap[key]);
-        if (badge) {
-            badge.textContent = val;
-            if (val === 'Cleared') {
-                badge.className = 'checklist-badge cleared';
-                clearedCount++;
-            } else {
-                badge.className = 'checklist-badge pending';
-            }
-        }
-    });
-
-    const progressPct = Math.round((clearedCount / 4) * 100);
-    document.getElementById('drawer-checklist-bar').style.width = `${progressPct}%`;
-    document.getElementById('drawer-checklist-percent').textContent = `${progressPct}% Approved`;
-
-    document.getElementById('clearance-drawer').setAttribute('aria-hidden', 'false');
-}
-
-function closeDrawer() {
-    document.getElementById('clearance-drawer').setAttribute('aria-hidden', 'true');
-}
-
-// ==========================================================================
-// DYNAMIC CHART RENDERING ENGINE (CHART.JS)
-// ==========================================================================
-const chartThemes = {
-    colorsArr: [
-        'rgba(16, 185, 129, 0.85)',  // Green
-        'rgba(245, 158, 11, 0.85)',  // Amber/Yellow
-        'rgba(239, 68, 68, 0.85)',   // Red
-        'rgba(251, 191, 36, 0.85)',  // Bright Yellow
-        'rgba(34, 197, 94, 0.85)',   // Bright Green
-        'rgba(220, 38, 38, 0.85)'    // Bright Red
-    ]
-};
-
+// Shared chart config options
 const commonChartOptions = {
     responsive: true,
     maintainAspectRatio: false,
     plugins: {
         legend: {
             position: 'bottom',
-            labels: {
-                font: { family: 'Figtree', size: 10 },
-                color: '#475569',
-                boxWidth: 10
-            }
+            labels: { boxWidth: 10, padding: 12, font: { family: 'Figtree', size: 9, weight: '500' }, color: '#475569' }
         },
-        datalabels: {
-            display: false // off by default for generic charts
-        }
-    },
-    onClick: (e, activeElements, chart) => {
-        if (activeElements && activeElements.length > 0) {
-            const firstPoint = activeElements[0];
-            const label = chart.data.labels[firstPoint.index];
-            const datasetIndex = firstPoint.datasetIndex;
-            const datasetLabel = chart.data.datasets[datasetIndex].label || '';
-            const chartId = chart.canvas.id;
-
-            triggerPivotModal(chartId, label, datasetLabel);
+        tooltip: {
+            backgroundColor: '#1e293b',
+            titleFont: { family: 'Figtree', size: 10, weight: '600' },
+            bodyFont: { family: 'Figtree', size: 9 },
+            padding: 8,
+            cornerRadius: 6
         }
     }
 };
 
-function renderFFCharts() {
-    if (typeof Chart === 'undefined') {
-        ['chart-ff-buckets', 'chart-ff-payment-type', 'chart-ff-ndc-clearance'].forEach(id => showChartPlaceholder(id));
-        return;
+document.addEventListener('DOMContentLoaded', () => {
+    setupEventListeners();
+    setupModalTabs();
+    loadData();
+});
+
+// Load filters on startup, then load UI
+async function loadData() {
+    updateSyncStatus('Loading database config...');
+    await apiLoadFilters();
+    await updateUI();
+    await updateSyncHistoryLogs();
+}
+
+async function updateUI() {
+    updateSyncStatus('Updating charts and tables...');
+    await Promise.all([
+        loadDashboardMetrics(),
+        loadRawExits()
+    ]);
+    updateSyncStatus('Synced & Connected');
+}
+
+// Fetch metrics and charts data from backend
+async function loadDashboardMetrics() {
+    try {
+        const response = await fetch('/api/widgets', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                employee_type: state.filters.employeeType,
+                hrbp_lead: state.filters.hrbpLead,
+                pl_name: state.filters.plName,
+                gender: state.filters.gender,
+                year: state.filters.year,
+                month: state.filters.month,
+                reasons_tab: state.filters.reasons_tab,
+                reasons_pl: state.filters.reasons_pl
+            })
+        });
+        if (!response.ok) throw new Error('Failed to retrieve dashboard metrics');
+        const data = await response.json();
+        state.widgets = data;
+        
+        // 1. Render F&F KPIs
+        if (data.total_ff_cases) {
+            document.getElementById('kpi-ff-total').textContent = data.total_ff_cases.value.toLocaleString();
+        }
+        if (data.average_tat) {
+            document.getElementById('kpi-ff-avg-tat').textContent = `${data.average_tat.value.toFixed(1)} days`;
+        }
+        if (data.total_ff_payout_by_pnl) {
+            const totalPayout = data.total_ff_payout_by_pnl.reduce((sum, item) => sum + item.totalPayout, 0);
+            document.getElementById('kpi-ff-payout').textContent = `₹${totalPayout.toLocaleString(undefined, { maximumFractionDigits: 0 })}`;
+        }
+        
+        // 2. Render Attrition KPIs
+        if (data.attrition_total) {
+            document.getElementById('kpi-attrition-total').textContent = data.attrition_total.value.toLocaleString();
+        }
+        if (data.attrition_rate) {
+            document.getElementById('kpi-attrition-rate').textContent = `${data.attrition_rate.value.toFixed(1)}%`;
+        }
+        if (data.attrition_regret) {
+            document.getElementById('kpi-attrition-regret').textContent = `${data.attrition_regret.value.toFixed(1)}%`;
+        }
+        if (data.attrition_tenure) {
+            document.getElementById('kpi-attrition-tenure').textContent = `${data.attrition_tenure.value} mo`;
+        }
+        if (data.attrition_dropout) {
+            document.getElementById('kpi-attrition-dropout').textContent = `${data.attrition_dropout.count} (${data.attrition_dropout.rate.toFixed(1)}%)`;
+        }
+        
+        // 3. Render charts and tables
+        renderFFCharts(data);
+        renderAttritionCharts(data);
+        
+        if (data.recovery_settlement_analysis) {
+            renderFFRecoveryAnalysisTable(data.recovery_settlement_analysis);
+        }
+        if (data.attrition_monthly_rate) {
+            renderMonthlyAttritionRateTable(data.attrition_monthly_rate);
+        }
+        if (data.top_exit_reasons_component) {
+            renderTopExitReasonsList(data.top_exit_reasons_component);
+        }
+        
+    } catch (err) {
+        console.error('Error loading dashboard widgets:', err);
+        showToast('Failed to load metric widgets.', 'error');
     }
-    const data = getFilteredFF();
+}
 
-    // 2. Ageing Buckets (Double Bar Graph Month-wise)
-    const ffIgnoringMonth = getFilteredFFIgnoringMonth();
-    const selectedMonths = state.filters.month;
-    const isAllMonths = selectedMonths.includes('All');
+// Fetch raw exits list for the main table registry at the bottom of the page
+async function loadRawExits() {
+    try {
+        const response = await fetch('/api/raw-data', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                employee_type: state.filters.employeeType,
+                hrbp_lead: state.filters.hrbpLead,
+                pl_name: state.filters.plName,
+                gender: state.filters.gender,
+                year: state.filters.year,
+                month: state.filters.month
+            })
+        });
+        if (!response.ok) throw new Error('Failed to load raw exits registry');
+        state.rawExits = await response.json();
+        
+        // Re-render tabular registry and pivot builders
+        renderRegistryTable();
+        
+    } catch (err) {
+        console.error('Error loading exits registry:', err);
+    }
+}
 
-    // Filter ageing buckets trend to show ONLY the selected month(s)
-    const displayItems = ffIgnoringMonth.filter(item => {
-        return isAllMonths || selectedMonths.includes(item.month);
-    });
-
-    const monthOrder = [
-        'January', 'February', 'March', 'April', 'May', 'June',
-        'July', 'August', 'September', 'October', 'November', 'December'
-    ];
-
-    const monthGroups = {};
-    displayItems.forEach(item => {
-        const m = item.month;
-        if (!m) return;
-        if (!monthGroups[m]) {
-            monthGroups[m] = {
-                month: m,
-                count1to2: 0,
-                count2plus: 0,
-                total: 0
-            };
+// Fetch dynamic filter options from database
+async function apiLoadFilters() {
+    try {
+        const response = await fetch('/api/filters');
+        if (!response.ok) throw new Error('Failed to fetch database filter schema');
+        const filters = await response.json();
+        
+        // 1. HRBP leads dropdown checkboxes
+        const hrbpContent = document.getElementById('dropdown-hrbp-content');
+        if (hrbpContent && filters.hrbp_leads) {
+            hrbpContent.innerHTML = `
+                <label class="dropdown-option">
+                    <input type="checkbox" id="chk-hrbp-all" value="All" checked> <em>All Leads</em>
+                </label>
+            `;
+            filters.hrbp_leads.forEach(l => {
+                hrbpContent.innerHTML += `
+                    <label class="dropdown-option">
+                        <input type="checkbox" name="chk-hrbp" value="${l}" checked> ${l}
+                    </label>
+                `;
+            });
+            setupCheckboxGroup('chk-hrbp-all', 'chk-hrbp', 'hrbpLead', updateHRBPTriggerLabel);
         }
-        monthGroups[m].total++;
-        if (item.ageing <= 2) {
-            monthGroups[m].count1to2++;
+        
+        // 2. P&L department checkboxes
+        const plContent = document.getElementById('dropdown-pl-content');
+        if (plContent && filters.pl_names) {
+            plContent.innerHTML = `
+                <label class="dropdown-option">
+                    <input type="checkbox" id="chk-pl-all" value="All" checked> <em>All P&Ls</em>
+                </label>
+            `;
+            filters.pl_names.forEach(p => {
+                plContent.innerHTML += `
+                    <label class="dropdown-option">
+                        <input type="checkbox" name="chk-pl" value="${p}" checked> ${p}
+                    </label>
+                `;
+            });
+            setupCheckboxGroup('chk-pl-all', 'chk-pl', 'plName', updatePLTriggerLabel);
+        }
+        
+        // 3. Month checkboxes
+        const monthContent = document.getElementById('dropdown-month-content');
+        if (monthContent && filters.months) {
+            monthContent.innerHTML = `
+                <label class="dropdown-option">
+                    <input type="checkbox" id="chk-month-all" value="All" checked> <em>All Months</em>
+                </label>
+            `;
+            filters.months.forEach(m => {
+                monthContent.innerHTML += `
+                    <label class="dropdown-option">
+                        <input type="checkbox" name="chk-month" value="${m}" checked> ${m}
+                    </label>
+                `;
+            });
+            setupCheckboxGroup('chk-month-all', 'chk-month', 'month', updateMonthTriggerLabel);
+        }
+        
+        // 4. Year checkboxes
+        const yearContent = document.getElementById('dropdown-year-content');
+        if (yearContent && filters.years) {
+            yearContent.innerHTML = `
+                <label class="dropdown-option">
+                    <input type="checkbox" id="chk-year-all" value="All" checked> <em>All Years</em>
+                </label>
+            `;
+            filters.years.forEach(y => {
+                yearContent.innerHTML += `
+                    <label class="dropdown-option">
+                        <input type="checkbox" name="chk-year" value="${y}" checked> ${y}
+                    </label>
+                `;
+            });
+            setupCheckboxGroup('chk-year-all', 'chk-year', 'year', updateYearTriggerLabel);
+        }
+        
+        // 5. Reasons pl select dropdown
+        const reasonsSelect = document.getElementById('reasons-pl-select');
+        if (reasonsSelect && filters.pl_names) {
+            reasonsSelect.innerHTML = '<option value="All">All Departments</option>';
+            filters.pl_names.forEach(p => {
+                reasonsSelect.innerHTML += `<option value="${p}">${p}</option>`;
+            });
+            reasonsSelect.value = 'All';
+        }
+        
+        // Set triggers default texts
+        updateHRBPTriggerLabel();
+        updatePLTriggerLabel();
+        updateMonthTriggerLabel();
+        updateYearTriggerLabel();
+        updateEmployeeTypeTriggerLabel();
+        
+    } catch (err) {
+        console.error('Error generating filters:', err);
+    }
+}
+
+// Checkbox multi-select controller
+function setupCheckboxGroup(allId, name, stateKey, labelFn) {
+    const allCb = document.getElementById(allId);
+    const container = allCb.closest('.dropdown-content');
+    
+    const getItems = () => container.querySelectorAll(`input[name="${name}"]`);
+    
+    allCb.addEventListener('change', () => {
+        const itemCbs = getItems();
+        if (allCb.checked) {
+            itemCbs.forEach(cb => cb.checked = true);
+            state.filters[stateKey] = ['All'];
         } else {
-            monthGroups[m].count2plus++;
+            itemCbs.forEach(cb => cb.checked = false);
+            state.filters[stateKey] = [];
         }
+        labelFn();
+        updateUI();
     });
-
-    const sortedMonths = Object.keys(monthGroups).sort((a, b) => {
-        return monthOrder.indexOf(a) - monthOrder.indexOf(b);
-    });
-
-    const count1to2Data = sortedMonths.map(m => monthGroups[m].count1to2);
-    const count2plusData = sortedMonths.map(m => monthGroups[m].count2plus);
-
-    const ctxBuckets = document.getElementById('chart-ff-buckets').getContext('2d');
-    if (charts.ffBuckets) charts.ffBuckets.destroy();
-
-    charts.ffBuckets = new Chart(ctxBuckets, {
-        type: 'bar',
-        data: {
-            labels: sortedMonths,
-            datasets: [
-                {
-                    label: '1-2 days',
-                    data: count1to2Data,
-                    backgroundColor: 'rgba(16, 185, 129, 0.85)',
-                    borderRadius: 4
-                },
-                {
-                    label: '2+ days',
-                    data: count2plusData,
-                    backgroundColor: 'rgba(239, 68, 68, 0.85)',
-                    borderRadius: 4
-                }
-            ]
-        },
-        options: {
-            ...commonChartOptions,
-            scales: {
-                x: { stacked: false, grid: { display: false } },
-                y: { stacked: false, grid: { color: '#f1f5f9' } }
-            },
-            plugins: {
-                ...commonChartOptions.plugins,
-                datalabels: {
-                    display: true,
-                    anchor: 'end',
-                    align: 'top',
-                    color: '#1a1a1a',
-                    offset: 1,
-                    formatter: (value) => value > 0 ? value : ''
-                },
-                tooltip: {
-                    callbacks: {
-                        label: function (context) {
-                            const label = context.dataset.label || '';
-                            const val = context.raw || 0;
-                            const m = context.label;
-                            const grp = monthGroups[m];
-                            if (!grp) return `${label}: ${val}`;
-                            const pct = grp.total > 0 ? ((val / grp.total) * 100).toFixed(1) : '0.0';
-                            return `${label}: ${val} (${pct}%)`;
-                        }
-                    }
-                }
+    
+    container.addEventListener('change', (e) => {
+        if (e.target.name === name) {
+            const itemCbs = getItems();
+            if (!e.target.checked) {
+                allCb.checked = false;
             }
+            const active = [];
+            itemCbs.forEach(c => {
+                if (c.checked) active.push(c.value);
+            });
+            if (active.length === itemCbs.length) {
+                allCb.checked = true;
+                state.filters[stateKey] = ['All'];
+            } else {
+                state.filters[stateKey] = active;
+            }
+            labelFn();
+            updateUI();
         }
     });
+}
 
-    // 3. NDC Clearance stacked bar chart by Department
-    const depts = ['HRBP', 'IT', 'Finance', 'Admin'];
-    const deptKeys = {
-        'HRBP': 'hrbp',
-        'IT': 'it',
-        'Finance': 'finance',
-        'Admin': 'admin'
-    };
-
-    const ontimeCounts = [];
-    const delayCounts = [];
-
-    depts.forEach(d => {
-        const key = deptKeys[d];
-        let ontime = 0;
-        let delay = 0;
-
-        data.forEach(item => {
-            if (!item.lastWorkingDay) {
-                delay++;
+// Fetch database logs to populate synchronizer list
+async function updateSyncHistoryLogs() {
+    try {
+        const response = await fetch('/api/sync/history');
+        if (!response.ok) return;
+        const data = await response.json();
+        
+        const textEl = document.getElementById('sync-status-text');
+        if (textEl) {
+            textEl.textContent = `DB Last Synced: ${data.last_success}`;
+        }
+        
+        const urlEl = document.getElementById('sheet-published-url');
+        if (urlEl && data.spreadsheet_id && !urlEl.value) {
+            urlEl.value = `https://docs.google.com/spreadsheets/d/${data.spreadsheet_id}/edit`;
+        }
+        
+        // Populate synchronizer logs table
+        const tbody = document.getElementById('tbody-sync-history');
+        if (tbody) {
+            tbody.innerHTML = '';
+            if (data.history.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="5" class="align-center">No logs recorded yet.</td></tr>';
                 return;
             }
-            const isOntime = item.clearanceDates[key] && (item.clearanceDates[key] === item.lastWorkingDay);
-            if (isOntime) {
-                ontime++;
-            } else {
-                delay++;
-            }
-        });
-
-        ontimeCounts.push(ontime);
-        delayCounts.push(delay);
-    });
-
-    const ctxNdc = document.getElementById('chart-ff-ndc-clearance').getContext('2d');
-    if (charts.ffNdcClearance) charts.ffNdcClearance.destroy();
-
-    charts.ffNdcClearance = new Chart(ctxNdc, {
-        type: 'bar',
-        data: {
-            labels: depts,
-            datasets: [
-                {
-                    label: 'Ontime',
-                    data: ontimeCounts,
-                    backgroundColor: 'rgba(16, 185, 129, 0.85)',
-                    borderRadius: 4
-                },
-                {
-                    label: 'Delay',
-                    data: delayCounts,
-                    backgroundColor: 'rgba(239, 68, 68, 0.85)',
-                    borderRadius: 4
-                }
-            ]
-        },
-        options: {
-            ...commonChartOptions,
-            scales: {
-                x: { stacked: true, grid: { display: false } },
-                y: { stacked: true, grid: { color: '#f1f5f9' } }
-            },
-            plugins: {
-                ...commonChartOptions.plugins,
-                datalabels: {
-                    display: true,
-                    anchor: 'center',
-                    align: 'center',
-                    color: '#ffffff',
-                    formatter: (value) => value > 0 ? value : ''
-                },
-                tooltip: {
-                    callbacks: {
-                        label: function (context) {
-                            const label = context.dataset.label || '';
-                            const val = context.raw || 0;
-                            const idx = context.dataIndex;
-                            const total = ontimeCounts[idx] + delayCounts[idx];
-                            const pct = total > 0 ? ((val / total) * 100).toFixed(1) : '0.0';
-                            return `${label}: ${val} (${pct}%)`;
-                        }
-                    }
-                }
-            }
+            data.history.forEach(log => {
+                const tr = document.createElement('tr');
+                const statusBadge = log.status === 'SUCCESS' 
+                    ? '<span class="badge badge-success">Success</span>' 
+                    : `<span class="badge badge-danger" title="${log.error_message || ''}">Failed</span>`;
+                tr.innerHTML = `
+                    <td>${log.sync_time}</td>
+                    <td>${statusBadge}</td>
+                    <td class="align-right">${log.rows_read}</td>
+                    <td class="align-right">${log.rows_inserted}</td>
+                    <td style="max-width: 150px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${log.error_message || '-'}</td>
+                `;
+                tbody.appendChild(tr);
+            });
         }
-    });
+    } catch (err) {
+        console.error(err);
+    }
+}
 
-    // 4. Payable vs Recovery (Doughnut)
-    const paymentCounts = { 'Payable': 0, 'Recovery': 0 };
-    data.forEach(d => {
-        if (d.paymentType === 'Payable') paymentCounts['Payable']++;
-        if (d.paymentType === 'Recovery') paymentCounts['Recovery']++;
-    });
+// Trigger backend synchronization on-demand
+async function triggerImmediateSync() {
+    const feedback = document.getElementById('sheets-sync-feedback');
+    const text = document.getElementById('sheets-feedback-text');
+    if (feedback && text) {
+        feedback.className = 'feedback-alert info';
+        feedback.style.display = 'block';
+        text.textContent = 'Contacting server to synchronize Google Sheets...';
+    }
+    
+    const urlInput = document.getElementById('sheet-published-url');
+    const sheetUrl = urlInput ? urlInput.value.trim() : '';
+    
+    try {
+        const response = await fetch('/api/sync', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ url: sheetUrl })
+        });
+        const result = await response.json();
+        
+        if (response.ok && result.success) {
+            if (feedback && text) {
+                feedback.className = 'feedback-alert success';
+                text.textContent = 'Sync successful! PostgreSQL Database refreshed.';
+            }
+            showToast('Google Sheets synchronized successfully!', 'success');
+            await loadData();
+            setTimeout(() => {
+                const modal = document.getElementById('sync-modal');
+                if (modal) modal.setAttribute('aria-hidden', 'true');
+            }, 1000);
+        } else {
+            throw new Error(result.error || 'Server returned an error');
+        }
+    } catch (err) {
+        console.error(err);
+        if (feedback && text) {
+            feedback.className = 'feedback-alert danger';
+            text.textContent = `Sync Failed: ${err.message}`;
+        }
+        showToast('Google Sheets sync failed.', 'error');
+    }
+}
 
-    const totalPayment = Object.values(paymentCounts).reduce((sum, c) => sum + c, 0) || 1;
-    const paymentLabels = Object.keys(paymentCounts).map(k => {
-        const count = paymentCounts[k];
-        const pct = ((count / totalPayment) * 100).toFixed(1);
-        return `${k}: ${count.toLocaleString()} (${pct}%)`;
-    });
+// --- Dynamic Filter Label Helpers ---
+function updatePLTriggerLabel() {
+    const label = document.getElementById('lbl-filter-pl');
+    if (!label) return;
+    const active = state.filters.plName;
+    label.textContent = active.includes('All') ? 'All P&L / COEs' : (active.length === 1 ? active[0] : `${active.length} Selected`);
+}
 
-    const ctxPayment = document.getElementById('chart-ff-payment-type').getContext('2d');
-    if (charts.ffPaymentType) charts.ffPaymentType.destroy();
-    charts.ffPaymentType = new Chart(ctxPayment, {
+function updateHRBPTriggerLabel() {
+    const label = document.getElementById('lbl-filter-hrbp');
+    if (!label) return;
+    const active = state.filters.hrbpLead;
+    label.textContent = active.includes('All') ? 'All HRBP Leads' : (active.length === 1 ? active[0] : `${active.length} Selected`);
+}
+
+function updateMonthTriggerLabel() {
+    const label = document.getElementById('lbl-filter-month');
+    if (!label) return;
+    const active = state.filters.month;
+    label.textContent = active.includes('All') ? 'All Months' : (active.length === 1 ? active[0] : `${active.length} Selected`);
+}
+
+function updateYearTriggerLabel() {
+    const label = document.getElementById('lbl-filter-year');
+    if (!label) return;
+    const active = state.filters.year;
+    label.textContent = active.includes('All') ? 'All Years' : (active.length === 1 ? active[0] : `${active.length} Selected`);
+}
+
+function updateEmployeeTypeTriggerLabel() {
+    const label = document.getElementById('lbl-filter-type');
+    if (!label) return;
+    const active = state.filters.employeeType;
+    label.textContent = active.includes('All') ? 'All Employee Types' : (active.length === 1 ? active[0] : `${active.length} Selected`);
+}
+
+function updateSyncStatus(msg) {
+    console.log(`[Status] ${msg}`);
+}
+
+// --- Charts Renderer Functions ---
+function renderFFCharts(data) {
+    if (typeof Chart === 'undefined') return;
+    
+    // 1. Doughnut: Payable vs Recovery
+    const ctxStatus = document.getElementById('chart-ff-status').getContext('2d');
+    if (charts.ffStatus) charts.ffStatus.destroy();
+    
+    const payable = data.payable_vs_recovery.Payable || 0;
+    const recovery = data.payable_vs_recovery.Recovery || 0;
+    const total = (payable + recovery) || 1;
+    
+    charts.ffStatus = new Chart(ctxStatus, {
         type: 'doughnut',
         data: {
-            labels: paymentLabels,
+            labels: [
+                `Payable: ${payable} (${((payable/total)*100).toFixed(1)}%)`,
+                `Recovery: ${recovery} (${((recovery/total)*100).toFixed(1)}%)`
+            ],
             datasets: [{
-                data: Object.values(paymentCounts),
+                data: [payable, recovery],
                 backgroundColor: ['#FF6F61', '#1A1A1A'],
                 borderWidth: 1.5,
                 borderColor: '#ffffff'
@@ -2262,49 +480,144 @@ function renderFFCharts() {
             cutout: '70%'
         }
     });
-}
 
-function renderAttritionCharts() {
-    if (typeof Chart === 'undefined') {
-        ['chart-attrition-pl', 'chart-attrition-voluntary', 'chart-attrition-tenure'].forEach(id => showChartPlaceholder(id));
-        return;
-    }
-    const exits = getFilteredAttrition();
-
-    // 1. Attrition by HRBP (Side-by-side Grouped Bar)
-    const hrbpExits = {};
-    exits.forEach(e => {
-        const lead = e.hrbpLead || 'Unassigned';
-        if (!hrbpExits[lead]) hrbpExits[lead] = { voluntary: 0, involuntary: 0 };
-        if (e.exitType === 'Voluntary') hrbpExits[lead].voluntary++;
-        else hrbpExits[lead].involuntary++;
+    // 2. Bar: Payout by P&L
+    const ctxPl = document.getElementById('chart-ff-pl').getContext('2d');
+    if (charts.ffPl) charts.ffPl.destroy();
+    
+    const plLabels = data.total_ff_payout_by_pnl.map(item => item.plName);
+    const plValues = data.total_ff_payout_by_pnl.map(item => item.totalPayout);
+    
+    charts.ffPl = new Chart(ctxPl, {
+        type: 'bar',
+        data: {
+            labels: plLabels,
+            datasets: [{
+                label: 'Payout Amount (₹)',
+                data: plValues,
+                backgroundColor: 'rgba(255, 111, 97, 0.85)',
+                borderRadius: 4
+            }]
+        },
+        options: {
+            ...commonChartOptions,
+            indexAxis: 'y',
+            scales: {
+                x: { grid: { color: '#f1f5f9' }, ticks: { font: { family: 'Figtree', size: 9 } } },
+                y: { grid: { display: false }, ticks: { font: { family: 'Figtree', size: 9 } } }
+            },
+            plugins: {
+                ...commonChartOptions.plugins,
+                datalabels: {
+                    display: true,
+                    anchor: 'end',
+                    align: 'right',
+                    color: '#475569',
+                    formatter: (value) => value > 0 ? '₹' + (value/1000).toFixed(0) + 'k' : ''
+                }
+            }
+        }
     });
 
-    // Explicitly define the 4 actual HRBP Leads as requested by the user
-    const sortedHrbps = ['Asha Khan', 'Tanu Srivastava', 'Janhavi Malhotra', 'Charvi Sarin'];
+    // 3. Stacked Bar: Monthly Ageing Breakdown
+    const ctxBuckets = document.getElementById('chart-ff-buckets').getContext('2d');
+    if (charts.ffBuckets) charts.ffBuckets.destroy();
+    
+    const months = data.ageing_bucket_breakdown.map(item => item.month);
+    const b1_2 = data.ageing_bucket_breakdown.map(item => item.bucket1_2);
+    const b2_plus = data.ageing_bucket_breakdown.map(item => item.bucket2_plus);
+    
+    charts.ffBuckets = new Chart(ctxBuckets, {
+        type: 'bar',
+        data: {
+            labels: months,
+            datasets: [
+                { label: '1-2 days', data: b1_2, backgroundColor: 'rgba(255, 111, 97, 0.85)', borderRadius: 4 },
+                { label: '2+ days', data: b2_plus, backgroundColor: 'rgba(26, 26, 26, 0.85)', borderRadius: 4 }
+            ]
+        },
+        options: {
+            ...commonChartOptions,
+            scales: {
+                x: { stacked: true, grid: { display: false }, ticks: { font: { family: 'Figtree', size: 9 } } },
+                y: { stacked: true, grid: { color: '#f1f5f9' }, ticks: { font: { family: 'Figtree', size: 9 } } }
+            },
+            plugins: {
+                ...commonChartOptions.plugins,
+                datalabels: {
+                    display: true,
+                    anchor: 'center',
+                    align: 'center',
+                    color: '#ffffff',
+                    formatter: (value) => value > 0 ? value : ''
+                }
+            }
+        }
+    });
 
-    const voluntaryData = sortedHrbps.map(p => hrbpExits[p] ? hrbpExits[p].voluntary : 0);
-    const involuntaryData = sortedHrbps.map(p => hrbpExits[p] ? hrbpExits[p].involuntary : 0);
+    // 4. Radar Chart: Clearance SLA Radar
+    const ctxRadar = document.getElementById('chart-ff-ndc-clearance').getContext('2d');
+    if (charts.ndcRadar) charts.ndcRadar.destroy();
+    
+    const depts = data.ndc_clearance.map(item => item.dept);
+    const ontimes = data.ndc_clearance.map(item => item.ontime);
+    const delays = data.ndc_clearance.map(item => item.delay);
+    
+    charts.ndcRadar = new Chart(ctxRadar, {
+        type: 'radar',
+        data: {
+            labels: depts,
+            datasets: [
+                {
+                    label: 'Ontime',
+                    data: ontimes,
+                    backgroundColor: 'rgba(255, 111, 97, 0.2)',
+                    borderColor: '#FF6F61',
+                    pointBackgroundColor: '#FF6F61',
+                    borderWidth: 2
+                },
+                {
+                    label: 'Delay',
+                    data: delays,
+                    backgroundColor: 'rgba(26, 26, 26, 0.1)',
+                    borderColor: '#1a1a1a',
+                    pointBackgroundColor: '#1a1a1a',
+                    borderWidth: 2
+                }
+            ]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            scales: {
+                r: {
+                    angleLines: { display: true, color: '#e2e8f0' },
+                    grid: { color: '#e2e8f0' },
+                    pointLabels: { font: { family: 'Figtree', size: 10, weight: '600' } },
+                    ticks: { backdropColor: 'transparent', font: { family: 'Figtree', size: 8 } }
+                }
+            },
+            plugins: {
+                legend: { position: 'bottom', labels: { boxWidth: 10, font: { family: 'Figtree', size: 9, weight: '500' } } }
+            }
+        }
+    });
+}
 
+function renderAttritionCharts(data) {
+    if (typeof Chart === 'undefined') return;
+    
+    // 1. Grouped Bar: HRBP Lead voluntary/involuntary splits
     const ctxPl = document.getElementById('chart-attrition-pl').getContext('2d');
     if (charts.attritionPl) charts.attritionPl.destroy();
+    
     charts.attritionPl = new Chart(ctxPl, {
         type: 'bar',
         data: {
-            labels: sortedHrbps,
+            labels: data.attrition_by_hrbp.labels,
             datasets: [
-                {
-                    label: 'Voluntary',
-                    data: voluntaryData,
-                    backgroundColor: 'rgba(255, 111, 97, 0.85)',
-                    borderRadius: 4
-                },
-                {
-                    label: 'Involuntary',
-                    data: involuntaryData,
-                    backgroundColor: 'rgba(26, 26, 26, 0.85)',
-                    borderRadius: 4
-                }
+                { label: 'Voluntary', data: data.attrition_by_hrbp.voluntary, backgroundColor: 'rgba(255, 111, 97, 0.85)', borderRadius: 4 },
+                { label: 'Involuntary', data: data.attrition_by_hrbp.involuntary, backgroundColor: 'rgba(26, 26, 26, 0.85)', borderRadius: 4 }
             ]
         },
         options: {
@@ -2327,27 +640,23 @@ function renderAttritionCharts() {
         }
     });
 
-    // 3. Voluntary vs Involuntary (Doughnut)
-    const volCounts = { 'Voluntary': 0, 'Involuntary': 0 };
-    exits.forEach(e => {
-        if (volCounts[e.exitType] !== undefined) volCounts[e.exitType]++;
-    });
-
-    const totalVol = Object.values(volCounts).reduce((sum, c) => sum + c, 0) || 1;
-    const volLabels = Object.keys(volCounts).map(k => {
-        const count = volCounts[k];
-        const pct = ((count / totalVol) * 100).toFixed(1);
-        return `${k}: ${count.toLocaleString()} (${pct}%)`;
-    });
-
+    // 2. Doughnut: Voluntary vs Involuntary ratio
     const ctxVol = document.getElementById('chart-attrition-voluntary').getContext('2d');
     if (charts.attritionVoluntary) charts.attritionVoluntary.destroy();
+    
+    const vol = data.attrition_voluntary_vs_involuntary.Voluntary || 0;
+    const invol = data.attrition_voluntary_vs_involuntary.Involuntary || 0;
+    const tot = (vol + invol) || 1;
+    
     charts.attritionVoluntary = new Chart(ctxVol, {
         type: 'doughnut',
         data: {
-            labels: volLabels,
+            labels: [
+                `Voluntary: ${vol} (${((vol/tot)*100).toFixed(1)}%)`,
+                `Involuntary: ${invol} (${((invol/tot)*100).toFixed(1)}%)`
+            ],
             datasets: [{
-                data: Object.values(volCounts),
+                data: [vol, invol],
                 backgroundColor: ['#FF6F61', '#1A1A1A'],
                 borderWidth: 1.5,
                 borderColor: '#ffffff'
@@ -2359,38 +668,27 @@ function renderAttritionCharts() {
         }
     });
 
-    // 4. Tenure Distribution (Doughnut - in Years)
-    const tenureBuckets = {
-        'less than 1 year': 0,
-        '1-2 yrs': 0,
-        '2-4 years': 0,
-        '4-10 yrs': 0
-    };
-
-    exits.forEach(e => {
-        const t = e.tenureMonths || 0;
-        const yrs = t / 12;
-        if (yrs < 1) tenureBuckets['less than 1 year']++;
-        else if (yrs <= 2) tenureBuckets['1-2 yrs']++;
-        else if (yrs <= 4) tenureBuckets['2-4 years']++;
-        else tenureBuckets['4-10 yrs']++;
-    });
-
-    const totalTenure = Object.values(tenureBuckets).reduce((sum, c) => sum + c, 0) || 1;
-    const tenureLabels = Object.keys(tenureBuckets).map(k => {
-        const count = tenureBuckets[k];
-        const pct = ((count / totalTenure) * 100).toFixed(1);
-        return `${k}: ${count.toLocaleString()} (${pct}%)`;
-    });
-
+    // 3. Doughnut: Tenure Buckets distribution
     const ctxTenure = document.getElementById('chart-attrition-tenure').getContext('2d');
     if (charts.attritionTenure) charts.attritionTenure.destroy();
+    
+    const buckets = data.attrition_tenure_distribution;
+    const tenureLabels = Object.keys(buckets);
+    const tenureValues = Object.values(buckets);
+    const totalTenure = tenureValues.reduce((sum, c) => sum + c, 0) || 1;
+    
+    const displayLabels = tenureLabels.map((lbl, idx) => {
+        const count = tenureValues[idx];
+        const pct = ((count / totalTenure) * 100).toFixed(1);
+        return `${lbl}: ${count} (${pct}%)`;
+    });
+    
     charts.attritionTenure = new Chart(ctxTenure, {
         type: 'doughnut',
         data: {
-            labels: tenureLabels,
+            labels: displayLabels,
             datasets: [{
-                data: Object.values(tenureBuckets),
+                data: tenureValues,
                 backgroundColor: ['#FF6F61', '#1A1A1A', '#757575', '#E0E0E0'],
                 borderWidth: 1.5,
                 borderColor: '#ffffff'
@@ -2401,75 +699,547 @@ function renderAttritionCharts() {
             cutout: '70%'
         }
     });
-}
-
-function showChartPlaceholder(canvasId) {
-    const canvas = document.getElementById(canvasId);
-    if (!canvas) return;
-    const parent = canvas.parentElement;
-
-    const existing = parent.querySelector('.chart-error-placeholder');
-    if (existing) return;
-
-    canvas.style.display = 'none';
-    const placeholder = document.createElement('div');
-    placeholder.className = 'chart-error-placeholder';
-    placeholder.style.cssText = 'display:flex;align-items:center;justify-content:center;height:100%;font-size:0.75rem;color:#64748b;text-align:center;padding:1rem;background:#f8fafc;border-radius:8px;border:1px dashed #e2e8f0;';
-    placeholder.textContent = 'Visualization loading...';
-    parent.appendChild(placeholder);
-}
-
-// ==========================================================================
-// TOAST NOTIFICATIONS
-// ==========================================================================
-function showToast(message, type = 'success') {
-    let container = document.getElementById('toast-container');
-    if (!container) {
-        container = document.createElement('div');
-        container.id = 'toast-container';
-        container.className = 'toast-container';
-        document.body.appendChild(container);
+    
+    // Update employee type table
+    const tbodyType = document.getElementById('tbody-attrition-type');
+    if (tbodyType && data.attrition_type_breakdown) {
+        tbodyType.innerHTML = '';
+        const types = Object.keys(data.attrition_type_breakdown);
+        types.forEach(t => {
+            const tr = document.createElement('tr');
+            tr.innerHTML = `
+                <td><strong>${t}</strong></td>
+                <td class="align-right">${data.attrition_type_breakdown[t].toLocaleString()}</td>
+            `;
+            tbodyType.appendChild(tr);
+        });
     }
+}
 
-    const toast = document.createElement('div');
-    toast.className = `toast ${type}`;
-
-    const iconSvg = type === 'success'
-        ? `<svg class="toast-icon" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>`
-        : `<svg class="toast-icon" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" /></svg>`;
-
-    toast.innerHTML = `
-        ${iconSvg}
-        <span class="toast-message">${message}</span>
+// Bind F&F Recovery analysis table values
+function renderFFRecoveryAnalysisTable(rows) {
+    const tbody = document.getElementById('tbody-ff-recovery-analysis');
+    if (!tbody) return;
+    tbody.innerHTML = '';
+    
+    if (rows.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="5" class="align-center">No recovery cases found.</td></tr>';
+        return;
+    }
+    
+    let totalRecHc = 0, totalUnrecHc = 0, sumRecovered = 0, sumUnrecovered = 0;
+    
+    rows.forEach(item => {
+        totalRecHc += item.recoveredHeadcount;
+        totalUnrecHc += item.unrecoveredHeadcount;
+        sumRecovered += item.totalRecovered;
+        sumUnrecovered += item.totalUnrecovered;
+        
+        const tr = document.createElement('tr');
+        tr.innerHTML = `
+            <td><strong>${item.plName}</strong></td>
+            <td class="align-right">${item.recoveredHeadcount}</td>
+            <td class="align-right">₹${item.totalRecovered.toLocaleString(undefined, { maximumFractionDigits: 0 })}</td>
+            <td class="align-right">${item.unrecoveredHeadcount}</td>
+            <td class="align-right">₹${item.totalUnrecovered.toLocaleString(undefined, { maximumFractionDigits: 0 })}</td>
+        `;
+        tbody.appendChild(tr);
+    });
+    
+    // Add Totals row
+    const trTotals = document.createElement('tr');
+    trTotals.style.background = 'var(--color-bg-alt)';
+    trTotals.style.fontWeight = 'bold';
+    trTotals.innerHTML = `
+        <td>Total Summary</td>
+        <td class="align-right">${totalRecHc}</td>
+        <td class="align-right">₹${sumRecovered.toLocaleString(undefined, { maximumFractionDigits: 0 })}</td>
+        <td class="align-right">${totalUnrecHc}</td>
+        <td class="align-right">₹${sumUnrecovered.toLocaleString(undefined, { maximumFractionDigits: 0 })}</td>
     `;
+    tbody.appendChild(trTotals);
+}
 
-    container.appendChild(toast);
+// Bind Monthly Attrition Rate table
+function renderMonthlyAttritionRateTable(rows) {
+    const tbody = document.getElementById('tbody-attrition-monthly-rate');
+    if (!tbody) return;
+    tbody.innerHTML = '';
+    
+    if (rows.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="4" class="align-center">No historical months found.</td></tr>';
+        return;
+    }
+    
+    rows.forEach(row => {
+        const tr = document.createElement('tr');
+        tr.innerHTML = `
+            <td><strong>${row.monthLabel}</strong></td>
+            <td class="align-right">${row.startHeadcount.toLocaleString()}</td>
+            <td class="align-right">${row.exitCount.toLocaleString()}</td>
+            <td class="align-right" style="font-weight: 600; color: var(--color-blue-primary);">${row.rate.toFixed(1)}%</td>
+        `;
+        tbody.appendChild(tr);
+    });
+}
 
-    toast.offsetHeight; // force reflow
-    toast.classList.add('show');
+// Bind Top Exit Reasons list items
+function renderTopExitReasonsList(reasons) {
+    const container = document.getElementById('reasons-list-container');
+    if (!container) return;
+    
+    container.innerHTML = '';
+    if (reasons.length === 0) {
+        container.innerHTML = `<p style="font-size:0.813rem;color:var(--color-text-muted); padding: 0.5rem 0;">No exit reasons recorded.</p>`;
+        return;
+    }
+    
+    const maxVal = Math.max(...reasons.map(r => r.count)) || 1;
+    
+    reasons.forEach(item => {
+        const pct = ((item.count / maxVal) * 100).toFixed(0);
+        const div = document.createElement('div');
+        div.className = 'reason-item';
+        div.innerHTML = `
+            <div class="reason-info-row">
+                <span>${item.reason}</span>
+                <span class="reason-count">${item.count} Exits</span>
+            </div>
+            <div class="progress-bar-container">
+                <div class="progress-bar-fill" style="width: ${pct}%;"></div>
+            </div>
+        `;
+        container.appendChild(div);
+    });
+}
 
-    setTimeout(() => {
-        toast.classList.remove('show');
-        toast.addEventListener('transitionend', () => {
-            toast.remove();
-            if (container.children.length === 0) {
-                container.remove();
+// Bind the tabular registry list at the bottom of the page (Client-side search/sort/pagination on raw API response)
+function renderRegistryTable() {
+    const tbody = document.getElementById('tbody-registry');
+    if (!tbody) return;
+    
+    // Apply client-side search text filtering
+    const searchVal = state.search.registry.toLowerCase();
+    let filtered = state.rawExits.filter(d => {
+        return (d.employeeId || '').toLowerCase().includes(searchVal) ||
+               (d.name || '').toLowerCase().includes(searchVal) ||
+               (d.plName || '').toLowerCase().includes(searchVal) ||
+               (d.hrbpLead || '').toLowerCase().includes(searchVal);
+    });
+    
+    // Apply client-side sorting
+    const col = state.sort.registry.column;
+    const order = state.sort.registry.order;
+    if (col) {
+        filtered.sort((a, b) => {
+            let valA = a[col] || '';
+            let valB = b[col] || '';
+            if (typeof valA === 'string') {
+                return order === 'asc' ? valA.localeCompare(valB) : valB.localeCompare(valA);
+            } else {
+                return order === 'asc' ? valA - valB : valB - valA;
             }
         });
-    }, 4000);
+    }
+    
+    // Apply pagination
+    const totalCount = filtered.length;
+    const pag = state.pagination.registry;
+    const totalPages = Math.max(1, Math.ceil(totalCount / pag.size));
+    if (pag.page > totalPages) pag.page = totalPages;
+    
+    const startIdx = (pag.page - 1) * pag.size;
+    const pageSubset = filtered.slice(startIdx, startIdx + pag.size);
+    
+    tbody.innerHTML = '';
+    if (pageSubset.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="11" class="align-center">No exits records found.</td></tr>';
+        return;
+    }
+    
+    pageSubset.forEach(row => {
+        const tr = document.createElement('tr');
+        tr.innerHTML = `
+            <td><strong>${row.employeeId}</strong></td>
+            <td>${row.name}</td>
+            <td>${row.gender}</td>
+            <td>${row.employeeType}</td>
+            <td>${row.hrbpLead}</td>
+            <td>${row.plName}</td>
+            <td>${row.lastWorkingDay}</td>
+            <td><span class="badge ${row.ffStatus === 'Payable' ? 'badge-success' : 'badge-danger'}">${row.ffStatus}</span></td>
+            <td class="align-right">${row.ageing || 0}</td>
+            <td><span class="badge ${row.clearanceStatus === 'Settled' ? 'badge-success' : 'badge-warning'}">${row.clearanceStatus}</span></td>
+            <td class="align-right">₹${(row.settlementAmount || 0).toLocaleString(undefined, { maximumFractionDigits: 0 })}</td>
+        `;
+        tbody.appendChild(tr);
+    });
+    
+    // Populate pagination footer text and bind buttons
+    const countInfo = document.getElementById('registry-count-info');
+    if (countInfo) {
+        const endRange = Math.min(startIdx + pag.size, totalCount);
+        countInfo.textContent = totalCount > 0 ? `Showing ${startIdx + 1}-${endRange} of ${totalCount} records` : '0 records found';
+    }
+    
+    // Bind buttons
+    const btnPrev = document.getElementById('btn-prev-registry');
+    const btnNext = document.getElementById('btn-next-registry');
+    
+    if (btnPrev) {
+        btnPrev.disabled = pag.page <= 1;
+        btnPrev.onclick = () => {
+            if (pag.page > 1) {
+                pag.page--;
+                renderRegistryTable();
+            }
+        };
+    }
+    
+    if (btnNext) {
+        btnNext.disabled = pag.page >= totalPages;
+        btnNext.onclick = () => {
+            if (pag.page < totalPages) {
+                pag.page++;
+                renderRegistryTable();
+            }
+        };
+    }
 }
 
-// Export drilldown records to a clean, formatted Excel file using SheetJS
+// Setup static and dynamic action event listeners
+function setupEventListeners() {
+    // 1. Tab switches
+    document.getElementById('tab-ff').addEventListener('click', () => switchTab('ff'));
+    document.getElementById('tab-attrition').addEventListener('click', () => switchTab('attrition'));
+    
+    // 2. Filter wrapper clicks
+    const dropdowns = [
+        { id: 'dropdown-employee-type', btnId: 'btn-filter-type' },
+        { id: 'dropdown-hrbp-lead', btnId: 'btn-filter-hrbp' },
+        { id: 'dropdown-pl-name', btnId: 'btn-filter-pl' },
+        { id: 'dropdown-month', btnId: 'btn-filter-month' },
+        { id: 'dropdown-year', btnId: 'btn-filter-year' }
+    ];
+    dropdowns.forEach(dd => {
+        const wrapper = document.getElementById(dd.id);
+        const trigger = document.getElementById(dd.btnId);
+        if (!wrapper || !trigger) return;
+        trigger.addEventListener('click', (e) => {
+            e.stopPropagation();
+            dropdowns.forEach(o => {
+                if (o.id !== dd.id) {
+                    const el = document.getElementById(o.id);
+                    if (el) el.classList.remove('open');
+                }
+            });
+            wrapper.classList.toggle('open');
+        });
+    });
+    document.addEventListener('click', () => {
+        dropdowns.forEach(dd => {
+            const el = document.getElementById(dd.id);
+            if (el) el.classList.remove('open');
+        });
+    });
+    
+    // 3. Employee type checkbox trigger listeners
+    const customDropdown = document.getElementById('dropdown-employee-type');
+    if (customDropdown) {
+        const allCb = document.getElementById('chk-type-all');
+        const itemCbs = customDropdown.querySelectorAll('input[name="chk-type"]');
+        allCb.addEventListener('change', () => {
+            if (allCb.checked) {
+                itemCbs.forEach(cb => cb.checked = true);
+                state.filters.employeeType = ['All'];
+            } else {
+                itemCbs.forEach(cb => cb.checked = false);
+                state.filters.employeeType = [];
+            }
+            updateEmployeeTypeTriggerLabel();
+            updateUI();
+        });
+        itemCbs.forEach(cb => {
+            cb.addEventListener('change', () => {
+                if (!cb.checked) allCb.checked = false;
+                const active = [];
+                itemCbs.forEach(c => {
+                    if (c.checked) active.push(c.value);
+                });
+                if (active.length === itemCbs.length) {
+                    allCb.checked = true;
+                    state.filters.employeeType = ['All'];
+                } else {
+                    state.filters.employeeType = active;
+                }
+                updateEmployeeTypeTriggerLabel();
+                updateUI();
+            });
+        });
+    }
+
+    // 4. Gender trigger
+    document.getElementById('select-gender').addEventListener('change', (e) => {
+        state.filters.gender = [e.target.value];
+        updateUI();
+    });
+
+    // 5. Search registries input listener
+    document.getElementById('search-registry').addEventListener('input', (e) => {
+        state.search.registry = e.target.value;
+        state.pagination.registry.page = 1;
+        renderRegistryTable();
+    });
+
+    // 6. Registry table header sorts
+    document.querySelectorAll('table#table-registry th.sortable').forEach(th => {
+        th.addEventListener('click', () => {
+            const column = th.getAttribute('data-sort');
+            const currentSort = state.sort.registry;
+            if (currentSort.column === column) {
+                currentSort.order = currentSort.order === 'asc' ? 'desc' : 'asc';
+            } else {
+                currentSort.column = column;
+                currentSort.order = 'asc';
+            }
+            
+            th.closest('tr').querySelectorAll('th').forEach(sib => {
+                sib.classList.remove('sort-asc', 'sort-desc');
+            });
+            th.classList.add(currentSort.order === 'asc' ? 'sort-asc' : 'sort-desc');
+            state.pagination.registry.page = 1;
+            renderRegistryTable();
+        });
+    });
+
+    // 7. Sync Modal listeners
+    const modal = document.getElementById('sync-modal');
+    document.getElementById('btn-sync-data').addEventListener('click', () => {
+        modal.setAttribute('aria-hidden', 'false');
+    });
+    const hideModal = () => modal.setAttribute('aria-hidden', 'true');
+    document.getElementById('btn-close-modal').addEventListener('click', hideModal);
+    document.getElementById('btn-close-modal-overlay').addEventListener('click', hideModal);
+    document.getElementById('btn-close-modal-footer').addEventListener('click', hideModal);
+    
+    // Save/sync button calls FastAPI sync immediately
+    document.getElementById('btn-save-sheets-config').addEventListener('click', () => {
+        triggerImmediateSync();
+    });
+    
+    // 8. Reasons component dropdown pl name filter
+    document.getElementById('reasons-pl-select').addEventListener('change', (e) => {
+        state.filters.reasons_pl = e.target.value;
+        loadDashboardMetrics();
+    });
+    
+    // Reasons tab switches (Voluntary / Involuntary)
+    const reasonsBtns = document.querySelectorAll('.reasons-tab-btn');
+    reasonsBtns.forEach(btn => {
+        btn.addEventListener('click', () => {
+            reasonsBtns.forEach(b => {
+                b.classList.remove('active');
+                b.style.background = 'transparent';
+                b.style.color = 'var(--color-text-muted)';
+            });
+            btn.classList.add('active');
+            btn.style.background = 'var(--color-blue-light)';
+            btn.style.color = 'var(--color-blue-accent)';
+            state.filters.reasons_tab = btn.getAttribute('data-tab');
+            loadDashboardMetrics();
+        });
+    });
+
+    // 9. Drilldown Pivot Dialog bindings
+    document.getElementById('btn-close-pivot').addEventListener('click', closePivotModal);
+    document.getElementById('btn-close-pivot-overlay').addEventListener('click', closePivotModal);
+    document.getElementById('btn-close-pivot-footer').addEventListener('click', closePivotModal);
+    document.getElementById('btn-download-pivot-excel').addEventListener('click', downloadPivotExcel);
+    document.getElementById('pivot-row-field').addEventListener('change', rebuildPivotTable);
+    document.getElementById('pivot-value-metric').addEventListener('change', rebuildPivotTable);
+    
+    // 10. Drawer Close trigger
+    document.getElementById('btn-close-drawer').addEventListener('click', closeDrawer);
+    document.getElementById('btn-close-drawer-overlay').addEventListener('click', closeDrawer);
+
+    // 11. Chart Clicks (Chart JS integration)
+    bindChartDrilldowns();
+}
+
+function switchTab(tab) {
+    state.activeTab = tab;
+    
+    const tabFF = document.getElementById('tab-ff');
+    const tabAttrition = document.getElementById('tab-attrition');
+    const sectionFF = document.getElementById('section-ff');
+    const sectionAttrition = document.getElementById('section-attrition');
+    
+    if (tab === 'ff') {
+        tabFF.classList.add('active');
+        tabAttrition.classList.remove('active');
+        sectionFF.classList.remove('hidden');
+        sectionAttrition.classList.add('hidden');
+    } else {
+        tabFF.classList.remove('active');
+        tabAttrition.classList.add('active');
+        sectionFF.classList.add('hidden');
+        sectionAttrition.classList.remove('hidden');
+    }
+}
+
+function setupModalTabs() {
+    const tabs = document.querySelectorAll('.modal-tab-btn');
+    const panels = document.querySelectorAll('.modal-tab-panel');
+    tabs.forEach(tab => {
+        tab.addEventListener('click', () => {
+            tabs.forEach(t => t.classList.remove('active'));
+            panels.forEach(p => p.classList.remove('active'));
+            tab.classList.add('active');
+            const panelId = tab.getAttribute('data-panel');
+            document.getElementById(panelId).classList.add('active');
+        });
+    });
+}
+
+function removeStartupOverlay() {
+    const overlay = document.getElementById('startup-overlay');
+    if (overlay) overlay.style.display = 'none';
+}
+
+function showStartupOverlay(msg) {
+    const overlay = document.getElementById('startup-overlay');
+    if (overlay) overlay.style.display = 'flex';
+}
+
+// --- Chart Drilldowns Integration ---
+function bindChartDrilldowns() {
+    // Add Click listener to canvases
+    const canvases = [
+        { id: 'chart-ff-status', isFF: true },
+        { id: 'chart-ff-pl', isFF: true },
+        { id: 'chart-ff-buckets', isFF: true },
+        { id: 'chart-ff-ndc-clearance', isFF: true },
+        { id: 'chart-attrition-pl', isFF: false },
+        { id: 'chart-attrition-voluntary', isFF: false },
+        { id: 'chart-attrition-tenure', isFF: false }
+    ];
+    
+    canvases.forEach(item => {
+        const el = document.getElementById(item.id);
+        if (!el) return;
+        el.onclick = (evt) => {
+            const chartRef = charts[item.id.replace('chart-ff-', 'ff').replace('chart-attrition-', 'attrition').replace('ff-ndc-clearance', 'ndcRadar')];
+            if (!chartRef) return;
+            const points = chartRef.getElementsAtEventForMode(evt, 'nearest', { intersect: true }, true);
+            if (points.length) {
+                const element = points[0];
+                const label = chartRef.data.labels[element.index];
+                const datasetLabel = chartRef.data.datasets[element.datasetIndex].label;
+                triggerPivotModal(item.id, label, datasetLabel);
+            }
+        };
+    });
+}
+
+// --- Drilldown Pivot Modal Builder ---
+function triggerPivotModal(chartId, label, datasetLabel) {
+    currentPivotChartId = chartId;
+    currentPivotIsFF = chartId.startsWith('chart-ff-');
+    
+    // Filter raw exits matching the chart element clicked
+    let subset = [];
+    const cleanLabel = label.includes(':') ? label.split(':')[0].trim() : label.trim();
+    
+    if (chartId === 'chart-ff-status') {
+        subset = state.rawExits.filter(d => d.clearanceStatus === cleanLabel);
+    } else if (chartId === 'chart-ff-pl') {
+        subset = state.rawExits.filter(d => d.plName === cleanLabel);
+    } else if (chartId === 'chart-ff-buckets') {
+        subset = state.rawExits.filter(d => {
+            const monthMatch = d.month === cleanLabel;
+            let bucketMatch = false;
+            if (datasetLabel === '1-2 days') {
+                bucketMatch = d.ageing <= 2;
+            } else if (datasetLabel === '2+ days') {
+                bucketMatch = d.ageing > 2;
+            }
+            return monthMatch && bucketMatch;
+        });
+    } else if (chartId === 'chart-ff-ndc-clearance') {
+        const deptKey = cleanLabel.toLowerCase();
+        subset = state.rawExits.filter(d => {
+            if (!d.lastWorkingDay) return false;
+            const dates = d.clearanceDates || {};
+            const matches = dates[deptKey] === d.lastWorkingDay;
+            return datasetLabel === 'Ontime' ? matches : !matches;
+        });
+    } else if (chartId === 'chart-attrition-pl') {
+        subset = state.rawExits.filter(d => d.hrbpLead === cleanLabel && d.exitType === datasetLabel);
+    } else if (chartId === 'chart-attrition-voluntary') {
+        subset = state.rawExits.filter(d => d.exitType === cleanLabel);
+    } else if (chartId === 'chart-attrition-tenure') {
+        subset = state.rawExits.filter(d => {
+            const t = d.tenureMonths || 0;
+            const yrs = t / 12;
+            if (cleanLabel.startsWith('less')) return yrs < 1;
+            if (cleanLabel.startsWith('1-2')) return yrs >= 1 && yrs <= 2;
+            if (cleanLabel.startsWith('2-4')) return yrs > 2 && yrs <= 4;
+            return yrs > 4;
+        });
+    }
+    
+    currentPivotSubset = subset;
+    
+    // Open modal
+    const modal = document.getElementById('pivot-modal');
+    modal.setAttribute('aria-hidden', 'false');
+    
+    // Set headers
+    document.getElementById('pivot-modal-title').textContent = `Drilldown Details: ${label} [${datasetLabel || ''}]`;
+    document.getElementById('pivot-count-badge').textContent = `${subset.length} records`;
+    
+    rebuildPivotTable();
+}
+
+function closePivotModal() {
+    document.getElementById('pivot-modal').setAttribute('aria-hidden', 'true');
+}
+
+function rebuildPivotTable() {
+    const tbody = document.getElementById('tbody-pivot-registry');
+    if (!tbody) return;
+    
+    tbody.innerHTML = '';
+    if (currentPivotSubset.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="7" class="align-center">No drilldown records.</td></tr>';
+        return;
+    }
+    
+    currentPivotSubset.forEach(row => {
+        const tr = document.createElement('tr');
+        tr.innerHTML = `
+            <td><strong>${row.employeeId}</strong></td>
+            <td>${row.name}</td>
+            <td>${row.employeeType}</td>
+            <td>${row.hrbpLead}</td>
+            <td>${row.plName}</td>
+            <td>${row.lastWorkingDay}</td>
+            <td class="align-right">₹${(row.settlementAmount || 0).toLocaleString(undefined, { maximumFractionDigits: 0 })}</td>
+        `;
+        // Double click to open details drawer
+        tr.ondblclick = () => showDrawer(row.employeeId);
+        tbody.appendChild(tr);
+    });
+}
+
 function downloadPivotExcel() {
     if (!currentPivotSubset || currentPivotSubset.length === 0) {
         showToast("No data to export", "warning");
         return;
     }
     
-    // Map objects to user-friendly Excel column headers
     const exportData = currentPivotSubset.map(item => {
         if (currentPivotChartId === 'chart-ff-ndc-clearance') {
-            // NDC Clearance SLA specific columns requested by the user
             return {
                 'Employee Code': item.employeeId || '',
                 'Employee Name': item.name || '',
@@ -2477,13 +1247,12 @@ function downloadPivotExcel() {
                 'Last Working Date': item.lastWorkingDay || '',
                 'F&F Closure Date': item.closureDate || '',
                 'Last NDC Trigger Date': item.lastNdcTriggeredDate || '',
-                'HRBP NDC Date': item.clearanceDates ? item.clearanceDates.hrbp : '',
-                'IT Clearance Date': item.clearanceDates ? item.clearanceDates.it : '',
-                'Finance Clearance Date': item.clearanceDates ? item.clearanceDates.finance : '',
-                'Admin Clearance Date': item.clearanceDates ? item.clearanceDates.admin : ''
+                'HRBP NDC Date': item.clearanceDates?.hrbp || '',
+                'IT Clearance Date': item.clearanceDates?.it || '',
+                'Finance Clearance Date': item.clearanceDates?.finance || '',
+                'Admin Clearance Date': item.clearanceDates?.admin || ''
             };
         } else if (currentPivotIsFF) {
-            // Standard F&F cases: include F&F Closure Date instead of Clearance Status
             return {
                 'Employee ID': item.employeeId || '',
                 'Employee Name': item.name || '',
@@ -2494,7 +1263,7 @@ function downloadPivotExcel() {
                 'Month': item.month || '',
                 'Last Working Day': item.lastWorkingDay || '',
                 'F&F Closure Date': item.closureDate || '',
-                'Payment Type': item.paymentType || '',
+                'Payout Type': item.ffStatus || '',
                 'Ageing (Days)': item.ageing || 0,
                 'F&F Amount (Column AA)': item.ffAmountAA || 0,
                 'Final F&F Amount (Column AE)': item.finalAmountAE || 0,
@@ -2525,815 +1294,72 @@ function downloadPivotExcel() {
 
     const worksheet = XLSX.utils.json_to_sheet(exportData);
     const workbook = XLSX.utils.book_new();
-    
     const sheetName = currentPivotChartId === 'chart-ff-ndc-clearance' ? "NDC Clearance Cases" : (currentPivotIsFF ? "F&F Cases" : "Attrition Cases");
     XLSX.utils.book_append_sheet(workbook, worksheet, sheetName);
     
-    // Auto-fit columns
-    const max_width = exportData.reduce((w, r) => Math.max(w, Object.keys(r).length), 10);
-    worksheet["!cols"] = Array(max_width).fill({ wch: 15 });
-
     const filename = `${sheetName.replace(" ", "_")}_Drilldown_${new Date().toISOString().substring(0,10)}.xlsx`;
     XLSX.writeFile(workbook, filename);
     showToast(`Successfully downloaded Excel: ${filename}`, 'success');
 }
 
-// ==========================================================================
-// DRILLDOWN PIVOT TABLE DIALOG LOGIC
-// ==========================================================================
-let currentPivotSubset = [];
-let currentPivotIsFF = false;
-let currentPivotChartId = '';
-
-function triggerPivotModal(chartId, clickedLabel, datasetLabel) {
-    currentPivotChartId = chartId;
-    let subsetData = [];
-    let titleContext = '';
-    const isFF = chartId.startsWith('chart-ff-');
-
-    const cleanLabel = clickedLabel.includes(':') ? clickedLabel.split(':')[0].trim() : clickedLabel.trim();
-
-    if (isFF) {
-        let rawSubset = getFilteredFF();
-        if (chartId === 'chart-ff-status') {
-            subsetData = rawSubset.filter(d => d.clearanceStatus === cleanLabel);
-            titleContext = `F&F Status = ${cleanLabel}`;
-        } else if (chartId === 'chart-ff-buckets') {
-            rawSubset = getFilteredFFIgnoringMonth();
-            subsetData = rawSubset.filter(d => {
-                const monthMatch = d.month === clickedLabel;
-                let bucketMatch = false;
-                if (datasetLabel === '1-2 days') {
-                    bucketMatch = d.ageing <= 2;
-                } else if (datasetLabel === '2+ days') {
-                    bucketMatch = d.ageing > 2;
-                }
-                return monthMatch && bucketMatch;
-            });
-            titleContext = `Month: ${clickedLabel} | Ageing: ${datasetLabel}`;
-        } else if (chartId === 'chart-ff-ndc-clearance') {
-            const deptKey = clickedLabel.toLowerCase(); // 'hrbp', 'it', 'finance', 'admin'
-            subsetData = rawSubset.filter(d => {
-                if (!d.lastWorkingDay) return false;
-                const matches = d.clearanceDates[deptKey] === d.lastWorkingDay;
-                return datasetLabel === 'Ontime' ? matches : !matches;
-            });
-            titleContext = `Dept: ${clickedLabel} | NDC Status: ${datasetLabel}`;
-        } else if (chartId === 'chart-ff-payment-type') {
-            subsetData = rawSubset.filter(d => d.paymentType === cleanLabel);
-            titleContext = `F&F Payout Type = ${cleanLabel}`;
-        } else if (chartId === 'chart-ff-recovery-dept' || chartId === 'chart-ff-payout-pl') {
-            subsetData = rawSubset.filter(d => d.plName === cleanLabel);
-            titleContext = `P&L Department = ${cleanLabel}`;
-        }
-    } else {
-        let rawSubset = getFilteredAttrition();
-        if (chartId === 'chart-attrition-voluntary') {
-            subsetData = rawSubset.filter(d => d.exitType === cleanLabel);
-            titleContext = `Exit Type = ${cleanLabel}`;
-        } else if (chartId === 'chart-attrition-tenure') {
-            subsetData = rawSubset.filter(d => {
-                const yrs = (d.tenureMonths || 0) / 12;
-                if (cleanLabel === 'less than 1 year') return yrs < 1;
-                if (cleanLabel === '1-2 yrs') return yrs >= 1 && yrs <= 2;
-                if (cleanLabel === '2-4 years') return yrs > 2 && yrs <= 4;
-                return yrs > 4;
-            });
-            titleContext = `Tenure Range = ${cleanLabel}`;
-        } else if (chartId === 'chart-attrition-type') {
-            subsetData = rawSubset.filter(d => d.employeeType === cleanLabel);
-            titleContext = `Employee Type = ${cleanLabel}`;
-        } else if (chartId === 'chart-attrition-pl') {
-            subsetData = rawSubset.filter(d => d.hrbpLead === cleanLabel && d.exitType === datasetLabel);
-            titleContext = `HRBP = ${cleanLabel} (${datasetLabel})`;
-        }
-    }
-
-    currentPivotSubset = subsetData;
-    currentPivotIsFF = isFF;
-
-    const amountOpt = document.getElementById('pivot-opt-amount');
-    const valSelect = document.getElementById('pivot-value-metric');
-
-    if (isFF) {
-        if (amountOpt) amountOpt.style.display = 'block';
-    } else {
-        if (amountOpt) amountOpt.style.display = 'none';
-        valSelect.value = 'count';
-    }
-
-    const descEl = document.getElementById('pivot-modal-desc');
-    if (descEl) descEl.textContent = `Analyzing ${subsetData.length.toLocaleString()} cases matching: [${titleContext}]`;
-
-    const pivotModal = document.getElementById('pivot-modal');
-    if (pivotModal) pivotModal.setAttribute('aria-hidden', 'false');
-
-    rebuildPivotTable();
-}
-
-function closePivotModal() {
-    const pivotModal = document.getElementById('pivot-modal');
-    if (pivotModal) pivotModal.setAttribute('aria-hidden', 'true');
-}
-
-function rebuildPivotTable() {
-    const rowField = document.getElementById('pivot-row-field').value;
-    const valueMetric = document.getElementById('pivot-value-metric').value;
-    const container = document.getElementById('pivot-table-container');
-
-    if (!container) return;
-    const html = renderPivotTable(currentPivotSubset, rowField, valueMetric, currentPivotIsFF);
-    container.innerHTML = html;
-}
-
-function renderPivotTable(subsetData, rowField, valueMetric, isFF) {
-    const groups = {};
-    subsetData.forEach(item => {
-        let key = item[rowField] || 'Unassigned';
-        if (!groups[key]) groups[key] = [];
-        groups[key].push(item);
-    });
-
-    const rows = [];
-    Object.keys(groups).forEach(key => {
-        const items = groups[key];
-        let val = 0;
-        if (valueMetric === 'count') {
-            val = items.length;
-        } else if (valueMetric === 'amount') {
-            val = items.reduce((sum, x) => sum + (x.settlementAmount || 0), 0);
-        } else if (valueMetric === 'tenure') {
-            val = items.reduce((sum, x) => sum + (x.tenureMonths || 0), 0) / items.length;
-        }
-        rows.push({ key, val, count: items.length });
-    });
-
-    rows.sort((a, b) => b.val - a.val);
-
-    let valueHeader = 'Count';
-    if (valueMetric === 'amount') valueHeader = 'Total Amount (₹)';
-    if (valueMetric === 'tenure') valueHeader = 'Avg Tenure (Months)';
-
-    let html = `
-        <table>
-            <thead>
-                <tr>
-                    <th>${formatFieldName(rowField)}</th>
-                    <th class="align-right">Record Count</th>
-                    <th class="align-right">${valueHeader}</th>
-                </tr>
-            </thead>
-            <tbody>
-    `;
-
-    let totalCount = 0;
-    let totalVal = 0;
-
-    rows.forEach(r => {
-        totalCount += r.count;
-        if (valueMetric === 'amount') totalVal += r.val;
-        else if (valueMetric === 'tenure') totalVal += r.val * r.count;
-
-        let displayVal = r.val.toLocaleString();
-        if (valueMetric === 'amount') {
-            displayVal = `₹${Math.round(r.val).toLocaleString('en-IN')}`;
-        } else if (valueMetric === 'tenure') {
-            displayVal = `${r.val.toFixed(1)} mo`;
-        }
-
-        html += `
-            <tr>
-                <td><strong>${r.key}</strong></td>
-                <td class="align-right">${r.count.toLocaleString()}</td>
-                <td class="align-right">${displayVal}</td>
-            </tr>
-        `;
-    });
-
-    let overallVal = totalVal;
-    if (valueMetric === 'count') overallVal = totalCount;
-    else if (valueMetric === 'tenure') overallVal = totalCount > 0 ? (totalVal / totalCount) : 0;
-
-    let displayOverall = overallVal.toLocaleString();
-    if (valueMetric === 'amount') {
-        displayOverall = `₹${Math.round(overallVal).toLocaleString('en-IN')}`;
-    } else if (valueMetric === 'tenure') {
-        displayOverall = `${overallVal.toFixed(1)} mo`;
-    }
-
-    html += `
-            </tbody>
-            <tfoot>
-                <tr style="font-weight: bold; background-color: var(--color-blue-light); color: var(--color-blue-primary);">
-                    <td>Total</td>
-                    <td class="align-right">${totalCount.toLocaleString()}</td>
-                    <td class="align-right">${displayOverall}</td>
-                </tr>
-            </tfoot>
-        </table>
-    `;
-
-    return html;
-}
-
-function formatFieldName(field) {
-    if (field === 'plName') return 'P&L Home (Department)';
-    if (field === 'hrbpLead') return 'HRBP Lead';
-    if (field === 'employeeType') return 'Employee Type';
-    if (field === 'gender') return 'Gender';
-    return field;
-}
-
-// ==========================================================================
-// TOP EXIT REASONS COMPONENT BY P&L HOME
-// ==========================================================================
-function populateReasonsPlDropdown() {
-    const select = document.getElementById('reasons-pl-select');
-    if (!select || select.children.length > 1) return;
-
-    const pls = new Set();
-    state.attritionData.forEach(item => {
-        if (item.plName) pls.add(item.plName);
-    });
-
-    Array.from(pls).sort().forEach(pl => {
-        select.innerHTML += `<option value="${pl}">${pl}</option>`;
-    });
-}
-
-function renderTopExitReasonsList(selectedPl) {
-    const listContainer = document.getElementById('reasons-list-container');
-    if (!listContainer) return;
-
-    let exits = state.attritionData.filter(e => selectedPl === 'All' || e.plName === selectedPl);
-
-    const tab = state.activeReasonsTab || 'voluntary';
-    if (tab === 'voluntary') {
-        exits = exits.filter(e => e.exitType === 'Voluntary' && !e.isDropout);
-    } else if (tab === 'involuntary') {
-        exits = exits.filter(e => e.exitType === 'Involuntary' && !e.isDropout);
-    } else if (tab === 'dropout') {
-        exits = exits.filter(e => e.isDropout);
-    }
-
-    const counts = {};
-    let total = 0;
-    exits.forEach(e => {
-        const reason = e.reasonForLeaving || 'Unassigned';
-        counts[reason] = (counts[reason] || 0) + 1;
-        total++;
-    });
-
-    const sorted = Object.keys(counts).map(r => ({
-        reason: r,
-        count: counts[r],
-        pct: total > 0 ? Math.round((counts[r] / total) * 100) : 0
-    })).sort((a, b) => b.count - a.count).slice(0, 5);
-
-    listContainer.innerHTML = sorted.length > 0 ? '' : `<p style="font-size:0.813rem;color:var(--color-text-muted); padding: 0.5rem 0;">No exit reasons recorded for ${tab}.</p>`;
-
-    sorted.forEach(item => {
-        let barClass = 'voluntary';
-        if (tab === 'involuntary') barClass = 'involuntary';
-        else if (tab === 'dropout') barClass = 'dropout';
-
-        listContainer.innerHTML += `
-            <div class="reason-item">
-                <div class="reason-info-row">
-                    <span>${item.reason}</span>
-                    <span>${item.count} (${item.pct}%)</span>
-                </div>
-                <div class="reason-bar-container">
-                    <div class="reason-bar-fill ${barClass}" style="width: ${item.pct}%"></div>
-                </div>
-            </div>
-        `;
-    });
-}
-
-// ==========================================================================
-// RECOVERY & SETTLEMENT ANALYSIS BY P&L TABLE
-// ==========================================================================
-function renderFFRecoveryAnalysisTable() {
-    const data = getFilteredFF();
-    const recoveryCases = data.filter(d => d.paymentType === 'Recovery');
-
-    const plGroups = {};
+// --- Detail Slide-out Drawer Builder ---
+function showDrawer(empId) {
+    const row = state.rawExits.find(d => d.employeeId === empId);
+    if (!row) return;
     
-    let totalRecoveredHC = 0;
-    let totalRecoveredAmt = 0;
-    let totalUnrecoveredHC = 0;
-    let totalUnrecoveredAmt = 0;
-
-    recoveryCases.forEach(item => {
-        const pl = item.plName || 'Unassigned';
-        if (!plGroups[pl]) {
-            plGroups[pl] = {
-                plName: pl,
-                recoveredHeadcount: 0,
-                totalRecovered: 0,
-                unrecoveredHeadcount: 0,
-                totalUnrecovered: 0
-            };
-        }
-        const g = plGroups[pl];
-
-        const due = Math.abs(item.ffAmountAA || 0);
-        const unpaid = Math.abs(item.finalAmountAE || 0);
-
-        g.totalUnrecovered += unpaid;
-        totalUnrecoveredAmt += unpaid;
-        if (unpaid > 0) {
-            g.unrecoveredHeadcount++;
-            totalUnrecoveredHC++;
-        }
-
-        const recovered = due - unpaid;
-        if (recovered !== 0) {
-            const recVal = Math.max(0, recovered);
-            g.totalRecovered += recVal;
-            totalRecoveredAmt += recVal;
-            g.recoveredHeadcount++;
-            totalRecoveredHC++;
-        }
-    });
-
-    const list = Object.values(plGroups);
-
-    const searched = list.filter(item => {
-        const q = state.search.recovery || '';
-        if (!q) return true;
-        return item.plName.toLowerCase().includes(q);
-    });
-
-    const sortState = state.sort.recovery;
-    const sorted = [...searched].sort((a, b) => {
-        let valA = a[sortState.column];
-        let valB = b[sortState.column];
-
-        if (typeof valA === 'string') {
-            return sortState.order === 'asc' ? valA.localeCompare(valB) : valB.localeCompare(valA);
-        } else {
-            return sortState.order === 'asc' ? valA - valB : valB - valA;
-        }
-    });
-
-    const tbody = document.getElementById('tbody-ff-recovery-analysis');
-    if (!tbody) return;
-    tbody.innerHTML = '';
-
-    sorted.forEach(item => {
-        const row = document.createElement('tr');
-        row.innerHTML = `
-            <td><strong>${item.plName}</strong></td>
-            <td class="align-right">${item.recoveredHeadcount}</td>
-            <td class="align-right" style="color:var(--status-success-text); font-weight:600;">₹${Math.round(item.totalRecovered).toLocaleString('en-IN')}</td>
-            <td class="align-right">${item.unrecoveredHeadcount}</td>
-            <td class="align-right" style="color:var(--status-danger-text); font-weight:600;">₹${Math.round(item.totalUnrecovered).toLocaleString('en-IN')}</td>
-        `;
-        tbody.appendChild(row);
-    });
-
-    // Add sticky totals row at bottom
-    if (sorted.length > 0) {
-        const totalRow = document.createElement('tr');
-        totalRow.className = 'table-total-row';
-        totalRow.innerHTML = `
-            <td><strong>Total</strong></td>
-            <td class="align-right">${totalRecoveredHC.toLocaleString('en-IN')}</td>
-            <td class="align-right" style="color:var(--status-success-text);">₹${Math.round(totalRecoveredAmt).toLocaleString('en-IN')}</td>
-            <td class="align-right">${totalUnrecoveredHC.toLocaleString('en-IN')}</td>
-            <td class="align-right" style="color:var(--status-danger-text);">₹${Math.round(totalUnrecoveredAmt).toLocaleString('en-IN')}</td>
-        `;
-        tbody.appendChild(totalRow);
-    }
-
-    const lbl = document.getElementById('lbl-recovery-table-count');
-    if (lbl) {
-        lbl.textContent = `Showing ${sorted.length} departments`;
-    }
-}
-
-// ==========================================================================
-// COMPACT INLINE TABLES RENDERING
-// ==========================================================================
-function renderFFPayoutPLTable() {
-    const data = getFilteredFF();
-    const plPayouts = {};
-    const plHeadcounts = {};
+    document.getElementById('drawer-emp-id').textContent = row.employeeId;
+    document.getElementById('drawer-emp-name').textContent = row.name;
+    document.getElementById('drawer-gender').textContent = row.gender;
+    document.getElementById('drawer-type').textContent = row.employeeType;
+    document.getElementById('drawer-hrbp').textContent = row.hrbpLead;
+    document.getElementById('drawer-pl').textContent = row.plName;
+    document.getElementById('drawer-dol').textContent = row.lastWorkingDay;
+    document.getElementById('drawer-doj').textContent = row.exitDate ? 'Available' : 'N/A'; // basic check
     
-    let totalHeadcount = 0;
-    let totalPayout = 0;
-
-    data.forEach(d => {
-        if (d.paymentType === 'Payable') {
-            const pl = d.plName || 'Unassigned';
-            plPayouts[pl] = (plPayouts[pl] || 0) + (d.finalAmountAE || 0);
-            plHeadcounts[pl] = (plHeadcounts[pl] || 0) + 1;
-            
-            totalHeadcount += 1;
-            totalPayout += (d.finalAmountAE || 0);
-        }
-    });
-
-    const sortedPls = Object.keys(plPayouts).sort((a, b) => plPayouts[b] - plPayouts[a]);
-    const tbody = document.getElementById('tbody-ff-payout-pl');
-    if (!tbody) return;
-    tbody.innerHTML = '';
-
-    sortedPls.forEach(pl => {
-        const row = document.createElement('tr');
-        row.innerHTML = `
-            <td><strong>${pl}</strong></td>
-            <td class="align-right">${plHeadcounts[pl] || 0}</td>
-            <td class="align-right" style="font-weight:600; color:var(--status-success-text);">₹${Math.round(plPayouts[pl]).toLocaleString('en-IN')}</td>
-        `;
-        tbody.appendChild(row);
-    });
-
-    // Add sticky totals row at bottom
-    if (sortedPls.length > 0) {
-        const totalRow = document.createElement('tr');
-        totalRow.className = 'table-total-row';
-        totalRow.innerHTML = `
-            <td><strong>Total</strong></td>
-            <td class="align-right">${totalHeadcount.toLocaleString('en-IN')}</td>
-            <td class="align-right" style="color:var(--status-success-text);">₹${Math.round(totalPayout).toLocaleString('en-IN')}</td>
-        `;
-        tbody.appendChild(totalRow);
-    }
-}
-
-function renderAttritionTypeTable() {
-    const exits = getFilteredAttrition();
-    const typeCounts = { 'Onroll': 0, 'Consultant': 0, 'Intern': 0 };
-    exits.forEach(e => {
-        if (typeCounts[e.employeeType] !== undefined) typeCounts[e.employeeType]++;
-    });
-
-    const tbody = document.getElementById('tbody-attrition-type');
-    if (!tbody) return;
-    tbody.innerHTML = '';
-
-    Object.keys(typeCounts).forEach(type => {
-        const card = document.createElement('div');
-        card.className = 'attrition-type-card';
-        card.innerHTML = `
-            <span class="type-name">${type}</span>
-            <span class="type-value">${typeCounts[type].toLocaleString('en-IN')} <span class="type-label">Exits</span></span>
-        `;
-        tbody.appendChild(card);
-    });
-}
-
-// ==========================================================================
-// GOOGLE SHEETS API INTEGRATION & SYNC ENGINE
-// ==========================================================================
-
-function setupModalTabs() {
-    const tabFile = document.getElementById('modal-tab-file');
-    const tabSheets = document.getElementById('modal-tab-sheets');
-    const panelFile = document.getElementById('modal-panel-file');
-    const panelSheets = document.getElementById('modal-panel-sheets');
-
-    if (!tabFile || !tabSheets || !panelFile || !panelSheets) return;
-
-    tabFile.addEventListener('click', () => {
-        tabFile.classList.add('active');
-        tabSheets.classList.remove('active');
-        panelFile.classList.remove('hidden');
-        panelSheets.classList.add('hidden');
-        tabFile.style.borderBottomColor = 'var(--color-blue-accent)';
-        tabFile.style.color = 'var(--color-blue-accent)';
-        tabSheets.style.borderBottomColor = 'transparent';
-        tabSheets.style.color = 'var(--color-text-muted)';
-    });
-
-    tabSheets.addEventListener('click', () => {
-        tabSheets.classList.add('active');
-        tabFile.classList.remove('active');
-        panelSheets.classList.remove('hidden');
-        panelFile.classList.add('hidden');
-        tabSheets.style.borderBottomColor = 'var(--color-blue-accent)';
-        tabSheets.style.color = 'var(--color-blue-accent)';
-        tabFile.style.borderBottomColor = 'transparent';
-        tabFile.style.color = 'var(--color-text-muted)';
-        populateSheetsConfigUI();
-    });
-}
-
-function loadGoogleSheetsConfig() {
-    const saved = localStorage.getItem('dash_google_sheets_config');
-    if (saved) {
-        try {
-            state.googleSheets = { ...state.googleSheets, ...JSON.parse(saved) };
-        } catch (e) {
-            console.error('Error loading Google Sheets config:', e);
-        }
-    }
+    document.getElementById('drawer-payout').textContent = row.ffStatus;
+    document.getElementById('drawer-ageing').textContent = `${row.ageing || 0} days`;
+    document.getElementById('drawer-clearance').textContent = row.clearanceStatus;
+    document.getElementById('drawer-amount').textContent = `₹${(row.settlementAmount || 0).toLocaleString()}`;
     
-    // Always default to your live Google Sheet if none is stored
-    if (!state.googleSheets.publishedUrl) {
-        state.googleSheets.publishedUrl = 'https://docs.google.com/spreadsheets/d/1nogDCTfDCqIjg8kHu42GoVjUqU6zEwwq30zQ1BbXmjM/edit';
-        state.googleSheets.spreadsheetId = '1nogDCTfDCqIjg8kHu42GoVjUqU6zEwwq30zQ1BbXmjM';
-    }
-    state.googleSheets.enabled = true;
+    // NDC Dates
+    const dates = row.clearanceDates || {};
+    document.getElementById('drawer-ndc-hrbp').textContent = dates.hrbp || 'Pending';
+    document.getElementById('drawer-ndc-it').textContent = dates.it || 'Pending';
+    document.getElementById('drawer-ndc-finance').textContent = dates.finance || 'Pending';
+    document.getElementById('drawer-ndc-admin').textContent = dates.admin || 'Pending';
+    
+    const drawer = document.getElementById('details-drawer');
+    drawer.classList.add('open');
 }
 
-function saveGoogleSheetsConfig() {
-    localStorage.setItem('dash_google_sheets_config', JSON.stringify(state.googleSheets));
+function closeDrawer() {
+    document.getElementById('details-drawer').classList.remove('open');
 }
 
-function populateSheetsConfigUI() {
-    const enabledEl = document.getElementById('sheet-sync-enabled');
-    const methodEl = document.getElementById('sheet-sync-method');
-    const apiKeyEl = document.getElementById('sheet-api-key');
-    const spreadIdEl = document.getElementById('sheet-spreadsheet-id');
-    const rangeEl = document.getElementById('sheet-range');
-    const pubUrlEl = document.getElementById('sheet-published-url');
-    const intervalEl = document.getElementById('sheet-sync-interval');
-
-    if (enabledEl) enabledEl.checked = state.googleSheets.enabled;
-    if (methodEl) methodEl.value = state.googleSheets.method;
-    if (apiKeyEl) apiKeyEl.value = state.googleSheets.apiKey;
-    if (spreadIdEl) spreadIdEl.value = state.googleSheets.spreadsheetId;
-    if (rangeEl) rangeEl.value = state.googleSheets.range;
-    if (pubUrlEl) pubUrlEl.value = state.googleSheets.publishedUrl;
-    if (intervalEl) intervalEl.value = state.googleSheets.refreshInterval;
-
-    toggleSheetMethodFields(state.googleSheets.method);
-}
-
-function toggleSheetMethodFields(method) {
-    const apiFields = document.getElementById('sheet-api-fields');
-    const pubFields = document.getElementById('sheet-published-fields');
-
-    if (!apiFields || !pubFields) return;
-
-    if (method === 'api') {
-        apiFields.classList.remove('hidden');
-        pubFields.classList.add('hidden');
-    } else {
-        apiFields.classList.add('hidden');
-        pubFields.classList.remove('hidden');
-    }
-}
-
-async function saveAndSyncSheetsConfig() {
-    const feedback = document.getElementById('sheets-sync-feedback');
-    const feedbackText = document.getElementById('sheets-feedback-text');
-    if (!feedback || !feedbackText) return;
-
-    feedback.className = 'feedback-alert hidden';
-
-    state.googleSheets.enabled = document.getElementById('sheet-sync-enabled').checked;
-    state.googleSheets.method = document.getElementById('sheet-sync-method').value;
-    state.googleSheets.apiKey = document.getElementById('sheet-api-key').value.trim();
-    state.googleSheets.spreadsheetId = document.getElementById('sheet-spreadsheet-id').value.trim();
-    state.googleSheets.range = document.getElementById('sheet-range').value.trim() || 'Sheet1';
-    state.googleSheets.publishedUrl = document.getElementById('sheet-published-url').value.trim();
-    state.googleSheets.refreshInterval = parseInt(document.getElementById('sheet-sync-interval').value) || 1;
-
-    saveGoogleSheetsConfig();
-    setupGoogleSheetsAutoRefresh();
-
-    // Trigger immediate sync
-    feedback.className = 'feedback-alert success'; // styling neutral container
-    feedback.style.backgroundColor = 'var(--status-info-bg)';
-    feedback.style.color = 'var(--status-info-text)';
-    feedbackText.textContent = 'Connecting to Google Sheets...';
-    feedback.classList.remove('hidden');
-
-    const success = await syncGoogleSheetsData();
-    if (success) {
-        feedback.className = 'feedback-alert success';
-        feedback.style.backgroundColor = 'var(--status-success-bg)';
-        feedback.style.color = 'var(--status-success-text)';
-        feedbackText.textContent = 'Successfully saved and synced Google Sheets data!';
-        showToast('Google Sheets sync successful!', 'success');
-        setTimeout(() => {
-            const modal = document.getElementById('sync-modal');
-            if (modal) modal.setAttribute('aria-hidden', 'true');
-        }, 1200);
-    } else {
-        feedback.className = 'feedback-alert error';
-        feedback.style.backgroundColor = 'var(--status-danger-bg)';
-        feedback.style.color = 'var(--status-danger-text)';
-        feedbackText.textContent = 'Connection failed. Please check spreadsheet URL/API settings.';
-    }
-}
-
-async function syncGoogleSheetsData() {
-    try {
-        let rows = [];
-        if (state.googleSheets.method === 'api') {
-            rows = await fetchGoogleSheetsAPI();
-        } else {
-            rows = await fetchGoogleSheetsPublished();
-        }
-
-        if (!rows || rows.length === 0) {
-            throw new Error('No data rows retrieved from Google Sheet.');
-        }
-
-        normalizeExcelRows(rows);
-        saveState();
-        setDefaultFiltersToLatest();
-        populateDropdownFilters();
-        updateUI();
-        state.googleSheets.lastRefreshed = new Date();
-        const timeStr = state.googleSheets.lastRefreshed.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-        updateSyncStatus(`Synced Google Sheet at ${timeStr}`);
-        return true;
-    } catch (error) {
-        console.error('Google Sheets sync error:', error);
-        showToast(`Sync failed: ${error.message}`, 'error');
-        return false;
-    }
-}
-
-async function fetchGoogleSheetsAPI() {
-    const { spreadsheetId, apiKey, range } = state.googleSheets;
-    if (!spreadsheetId || !apiKey) {
-        throw new Error('Spreadsheet ID and API Key are required.');
-    }
-    const url = `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent(range)}?key=${apiKey}`;
-    const response = await fetch(url);
-    if (!response.ok) {
-        const errorData = await response.json().catch(() => ({}));
-        const msg = errorData.error?.message || response.statusText;
-        throw new Error(`Google API Error: ${msg} (${response.status})`);
-    }
-    const data = await response.json();
-    if (!data.values || data.values.length === 0) {
-        throw new Error('No values found in the spreadsheet tab/range.');
+// --- Toast and Feedback Notifiers ---
+function showToast(message, type = 'success') {
+    let container = document.getElementById('toast-container');
+    if (!container) {
+        container = document.createElement('div');
+        container.id = 'toast-container';
+        container.className = 'toast-container';
+        document.body.appendChild(container);
     }
 
-    // Convert values grid (array of arrays) into array of objects using headers from row 0
-    const headers = data.values[0];
-    const rows = [];
-    for (let i = 1; i < data.values.length; i++) {
-        const rowVal = data.values[i];
-        const obj = {};
-        headers.forEach((header, index) => {
-            obj[header] = rowVal[index] !== undefined ? rowVal[index] : '';
-        });
-        rows.push(obj);
-    }
-    return rows;
-}
+    const toast = document.createElement('div');
+    toast.className = `toast ${type}`;
+    const iconSvg = type === 'success'
+        ? `<svg class="toast-icon" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>`
+        : `<svg class="toast-icon" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" /></svg>`;
 
-async function fetchGoogleSheetsPublished() {
-    let { publishedUrl } = state.googleSheets;
-    if (!publishedUrl) {
-        throw new Error('Published Spreadsheet URL is required.');
-    }
-
-    // Auto-detect standard Google Sheet URL and convert it to export link
-    const match = publishedUrl.match(/\/spreadsheets\/d\/([a-zA-Z0-9-_]+)/);
-    if (match && match[1]) {
-        const spreadsheetId = match[1];
-        publishedUrl = `https://docs.google.com/spreadsheets/d/${spreadsheetId}/export?format=xlsx`;
-        console.log("Auto-converted Google Sheet URL to direct Excel export link:", publishedUrl);
-    }
-
-    let response;
-    try {
-        // Try fetching via CORS proxy first to bypass docs.google.com blocks
-        const proxiedUrl = `https://corsproxy.io/?${encodeURIComponent(publishedUrl)}`;
-        console.log("Fetching Google Sheet via CORS proxy...");
-        response = await fetch(proxiedUrl);
-    } catch (e) {
-        console.warn("CORS proxy failed, attempting direct fetch...", e);
-    }
-
-    if (!response || !response.ok) {
-        console.log("Attempting direct fetch without proxy...");
-        response = await fetch(publishedUrl);
-    }
-
-    if (!response.ok) {
-        throw new Error(`Failed to fetch published sheet: ${response.statusText} (${response.status})`);
-    }
-    const arrayBuffer = await response.arrayBuffer();
-
-    // Parse XLSX using SheetJS
-    const data = new Uint8Array(arrayBuffer);
-    const workbook = XLSX.read(data, { type: 'array', cellDates: true });
-    const sheetName = workbook.SheetNames[0];
-    const worksheet = workbook.Sheets[sheetName];
-    const rows = XLSX.utils.sheet_to_json(worksheet);
-    return rows;
-}
-
-
-
-async function saveAndSyncSheetsConfig() {
-    const feedback = document.getElementById('sheets-sync-feedback');
-    const feedbackText = document.getElementById('sheets-feedback-text');
-    if (!feedback || !feedbackText) return;
-
-    feedback.className = 'feedback-alert hidden';
-
-    state.googleSheets.enabled = document.getElementById('sheet-sync-enabled').checked;
-    state.googleSheets.method = document.getElementById('sheet-sync-method').value;
-    state.googleSheets.apiKey = document.getElementById('sheet-api-key').value.trim();
-    state.googleSheets.spreadsheetId = document.getElementById('sheet-spreadsheet-id').value.trim();
-    state.googleSheets.range = document.getElementById('sheet-range').value.trim();
-    state.googleSheets.publishedUrl = document.getElementById('sheet-published-url').value.trim();
-    state.googleSheets.refreshInterval = parseInt(document.getElementById('sheet-sync-interval').value) || 1;
-
-    localStorage.setItem('dash_sheets_config', JSON.stringify(state.googleSheets));
-
-    const success = await syncGoogleSheetsData();
-    if (success) {
-        feedback.className = 'feedback-alert success';
-        feedbackText.textContent = 'Successfully saved and synced Google Sheets data!';
-        showToast('Google Sheets sync successful!', 'success');
-        setupGoogleSheetsAutoRefresh();
-        setTimeout(() => {
-            const modal = document.getElementById('sync-modal');
-            if (modal) modal.setAttribute('aria-hidden', 'true');
-        }, 1500);
-    } else {
-        feedback.className = 'feedback-alert error';
-        feedbackText.textContent = 'Sync failed. Please check credentials/URL and console logs.';
-    }
-}
-
-async function syncGoogleSheetsData() {
-    if (!state.googleSheets.enabled) return false;
-    updateSyncStatus('Syncing Google Sheet...');
-
-    try {
-        let rows = [];
-        if (state.googleSheets.method === 'api') {
-            rows = await fetchGoogleSheetsAPI();
-        } else {
-            rows = await fetchGoogleSheetsPublished();
-        }
-
-        if (!rows || rows.length === 0) {
-            throw new Error('No records returned from Google Sheet.');
-        }
-
-        normalizeExcelRows(rows);
-
-        try {
-            saveState();
-        } catch (e) {
-            console.warn('LocalStorage full, skipped caching:', e);
-        }
-
-        populateDropdownFilters();
-        updateUI();
-
-        const timeStr = new Date().toLocaleTimeString();
-        updateSyncStatus(`Synced Google Sheet at ${timeStr}`);
-        state.googleSheets.lastRefreshed = timeStr;
-        return true;
-    } catch (error) {
-        console.error('Google Sheets sync error:', error);
-        showToast(`Sync failed: ${error.message}`, 'error');
-        return false;
-    }
-}
-
-// Helpers removed to prevent duplication
-
-let googleSheetsIntervalId = null;
-let secondsRemaining = 60;
-let countdownIntervalId = null;
-
-function setupGoogleSheetsAutoRefresh() {
-    if (googleSheetsIntervalId) clearInterval(googleSheetsIntervalId);
-    if (countdownIntervalId) clearInterval(countdownIntervalId);
-
-    const countdownEl = document.getElementById('auto-refresh-countdown');
-    if (!countdownEl) return;
-
-    if (!state.googleSheets.enabled) {
-        countdownEl.style.display = 'none';
-        return;
-    }
-
-    countdownEl.style.display = 'inline';
-    secondsRemaining = state.googleSheets.refreshInterval * 60;
-
-    countdownEl.textContent = `(Sync in ${secondsRemaining}s)`;
-
-    countdownIntervalId = setInterval(() => {
-        if (secondsRemaining > 1) {
-            secondsRemaining--;
-            countdownEl.textContent = `(Sync in ${secondsRemaining}s)`;
-        } else {
-            countdownEl.textContent = `(Syncing...)`;
-        }
-    }, 1000);
-
-    googleSheetsIntervalId = setInterval(async () => {
-        const success = await syncGoogleSheetsData();
-        secondsRemaining = state.googleSheets.refreshInterval * 60;
-        countdownEl.textContent = `(Sync in ${secondsRemaining}s)`;
-    }, state.googleSheets.refreshInterval * 60 * 1000);
+    toast.innerHTML = `${iconSvg}<span class="toast-message">${message}</span>`;
+    container.appendChild(toast);
+    
+    toast.offsetHeight; // trigger reflow
+    toast.classList.add('show');
+    
+    setTimeout(() => {
+        toast.classList.remove('show');
+        toast.addEventListener('transitionend', () => toast.remove());
+    }, 4000);
 }
