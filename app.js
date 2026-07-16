@@ -103,31 +103,39 @@ async function loadDashboardMetrics() {
         
         // 1. Render F&F KPIs
         if (data.total_ff_cases) {
-            document.getElementById('kpi-ff-total').textContent = data.total_ff_cases.value.toLocaleString();
+            const el = document.getElementById('kpi-ff-total');
+            if (el) el.textContent = data.total_ff_cases.value.toLocaleString();
         }
         if (data.average_tat) {
-            document.getElementById('kpi-ff-avg-tat').textContent = `${data.average_tat.value.toFixed(1)} days`;
+            const el = document.getElementById('kpi-ff-avg-tat');
+            if (el) el.textContent = `${data.average_tat.value.toFixed(1)} days`;
         }
         if (data.total_ff_payout_by_pnl) {
             const totalPayout = data.total_ff_payout_by_pnl.reduce((sum, item) => sum + item.totalPayout, 0);
-            document.getElementById('kpi-ff-payout').textContent = `₹${totalPayout.toLocaleString(undefined, { maximumFractionDigits: 0 })}`;
+            const el = document.getElementById('kpi-ff-payout');
+            if (el) el.textContent = `₹${totalPayout.toLocaleString(undefined, { maximumFractionDigits: 0 })}`;
         }
         
         // 2. Render Attrition KPIs
         if (data.attrition_total) {
-            document.getElementById('kpi-attrition-total').textContent = data.attrition_total.value.toLocaleString();
+            const el = document.getElementById('kpi-attrition-total');
+            if (el) el.textContent = data.attrition_total.value.toLocaleString();
         }
         if (data.attrition_rate) {
-            document.getElementById('kpi-attrition-rate').textContent = `${data.attrition_rate.value.toFixed(1)}%`;
+            const el = document.getElementById('kpi-attrition-rate');
+            if (el) el.textContent = `${data.attrition_rate.value.toFixed(1)}%`;
         }
         if (data.attrition_regret) {
-            document.getElementById('kpi-attrition-regret').textContent = `${data.attrition_regret.value.toFixed(1)}%`;
+            const el = document.getElementById('kpi-attrition-regret');
+            if (el) el.textContent = `${data.attrition_regret.value.toFixed(1)}%`;
         }
         if (data.attrition_tenure) {
-            document.getElementById('kpi-attrition-tenure').textContent = `${data.attrition_tenure.value} mo`;
+            const el = document.getElementById('kpi-attrition-tenure');
+            if (el) el.textContent = `${data.attrition_tenure.value} mo`;
         }
         if (data.attrition_dropout) {
-            document.getElementById('kpi-attrition-dropout').textContent = `${data.attrition_dropout.count} (${data.attrition_dropout.rate.toFixed(1)}%)`;
+            const el = document.getElementById('kpi-attrition-dropout');
+            if (el) el.textContent = `${data.attrition_dropout.count} (${data.attrition_dropout.rate.toFixed(1)}%)`;
         }
         
         // 3. Render charts and tables
@@ -142,6 +150,9 @@ async function loadDashboardMetrics() {
         }
         if (data.top_exit_reasons_component) {
             renderTopExitReasonsList(data.top_exit_reasons_component);
+        }
+        if (data.attrition_reasons_total) {
+            renderAttritionReasonsTotalTable(data.attrition_reasons_total);
         }
         
     } catch (err) {
@@ -170,6 +181,17 @@ async function loadRawExits() {
         
         // Re-render tabular registry and pivot builders
         renderRegistryTable();
+        
+        // Render grade-wise attrition table
+        populateGradeWiseAttrition();
+        
+        // Render clearance summary counters
+        const lblTotal = document.getElementById('lbl-summary-total');
+        const lblSettled = document.getElementById('lbl-summary-settled');
+        const lblPending = document.getElementById('lbl-summary-pending');
+        if (lblTotal) lblTotal.textContent = state.rawExits.length.toLocaleString();
+        if (lblSettled) lblSettled.textContent = state.rawExits.filter(d => d.clearanceStatus === 'Settled').length.toLocaleString();
+        if (lblPending) lblPending.textContent = state.rawExits.filter(d => d.clearanceStatus !== 'Settled').length.toLocaleString();
         
     } catch (err) {
         console.error('Error loading exits registry:', err);
@@ -272,6 +294,12 @@ async function apiLoadFilters() {
         updateYearTriggerLabel();
         updateEmployeeTypeTriggerLabel();
         
+        // Append OK buttons to dynamic dropdown contents
+        appendOkButton('dropdown-hrbp-content');
+        appendOkButton('dropdown-pl-content');
+        appendOkButton('dropdown-month-content');
+        appendOkButton('dropdown-year-content');
+        
     } catch (err) {
         console.error('Error generating filters:', err);
     }
@@ -294,7 +322,6 @@ function setupCheckboxGroup(allId, name, stateKey, labelFn) {
             state.filters[stateKey] = [];
         }
         labelFn();
-        updateUI();
     });
     
     container.addEventListener('change', (e) => {
@@ -314,7 +341,6 @@ function setupCheckboxGroup(allId, name, stateKey, labelFn) {
                 state.filters[stateKey] = active;
             }
             labelFn();
-            updateUI();
         }
     });
 }
@@ -454,7 +480,7 @@ function renderFFCharts(data) {
     if (typeof Chart === 'undefined') return;
     
     // 1. Doughnut: Payable vs Recovery
-    const ctxStatus = document.getElementById('chart-ff-status').getContext('2d');
+    const ctxStatus = document.getElementById('chart-ff-payment-type').getContext('2d');
     if (charts.ffStatus) charts.ffStatus.destroy();
     
     const payable = data.payable_vs_recovery.Payable || 0;
@@ -481,43 +507,25 @@ function renderFFCharts(data) {
         }
     });
 
-    // 2. Bar: Payout by P&L
-    const ctxPl = document.getElementById('chart-ff-pl').getContext('2d');
-    if (charts.ffPl) charts.ffPl.destroy();
-    
-    const plLabels = data.total_ff_payout_by_pnl.map(item => item.plName);
-    const plValues = data.total_ff_payout_by_pnl.map(item => item.totalPayout);
-    
-    charts.ffPl = new Chart(ctxPl, {
-        type: 'bar',
-        data: {
-            labels: plLabels,
-            datasets: [{
-                label: 'Payout Amount (₹)',
-                data: plValues,
-                backgroundColor: 'rgba(255, 111, 97, 0.85)',
-                borderRadius: 4
-            }]
-        },
-        options: {
-            ...commonChartOptions,
-            indexAxis: 'y',
-            scales: {
-                x: { grid: { color: '#f1f5f9' }, ticks: { font: { family: 'Figtree', size: 9 } } },
-                y: { grid: { display: false }, ticks: { font: { family: 'Figtree', size: 9 } } }
-            },
-            plugins: {
-                ...commonChartOptions.plugins,
-                datalabels: {
-                    display: true,
-                    anchor: 'end',
-                    align: 'right',
-                    color: '#475569',
-                    formatter: (value) => value > 0 ? '₹' + (value/1000).toFixed(0) + 'k' : ''
-                }
-            }
+    // 2. Render F&F Payout by P&L Table (instead of bar chart)
+    const tbodyPl = document.getElementById('tbody-ff-payout-pl');
+    if (tbodyPl) {
+        tbodyPl.innerHTML = '';
+        const plRows = data.total_ff_payout_by_pnl || [];
+        if (plRows.length === 0) {
+            tbodyPl.innerHTML = '<tr><td colspan="3" class="align-center">No records found.</td></tr>';
+        } else {
+            plRows.forEach(item => {
+                const tr = document.createElement('tr');
+                tr.innerHTML = `
+                    <td><strong>${item.plName}</strong></td>
+                    <td class="align-right">${item.headcount}</td>
+                    <td class="align-right">₹${item.totalPayout.toLocaleString(undefined, { maximumFractionDigits: 0 })}</td>
+                `;
+                tbodyPl.appendChild(tr);
+            });
         }
-    });
+    }
 
     // 3. Stacked Bar: Monthly Ageing Breakdown
     const ctxBuckets = document.getElementById('chart-ff-buckets').getContext('2d');
@@ -549,13 +557,23 @@ function renderFFCharts(data) {
                     anchor: 'center',
                     align: 'center',
                     color: '#ffffff',
-                    formatter: (value) => value > 0 ? value : ''
+                    font: { family: 'Figtree', size: 8, weight: '600' },
+                    formatter: (value, context) => {
+                        const dataIndex = context.dataIndex;
+                        const chart = context.chart;
+                        const val1 = Number(chart.data.datasets[0].data[dataIndex]) || 0;
+                        const val2 = Number(chart.data.datasets[1].data[dataIndex]) || 0;
+                        const sum = val1 + val2;
+                        if (sum === 0 || value === 0) return '';
+                        const pct = ((value / sum) * 100).toFixed(0) + '%';
+                        return `${value}\n(${pct})`;
+                    }
                 }
             }
         }
     });
 
-    // 4. Radar Chart: Clearance SLA Radar
+    // 4. Stacked Bar Chart: Clearance SLA
     const ctxRadar = document.getElementById('chart-ff-ndc-clearance').getContext('2d');
     if (charts.ndcRadar) charts.ndcRadar.destroy();
     
@@ -564,41 +582,61 @@ function renderFFCharts(data) {
     const delays = data.ndc_clearance.map(item => item.delay);
     
     charts.ndcRadar = new Chart(ctxRadar, {
-        type: 'radar',
+        type: 'bar',
         data: {
             labels: depts,
             datasets: [
                 {
                     label: 'Ontime',
                     data: ontimes,
-                    backgroundColor: 'rgba(255, 111, 97, 0.2)',
-                    borderColor: '#FF6F61',
-                    pointBackgroundColor: '#FF6F61',
-                    borderWidth: 2
+                    backgroundColor: 'rgba(255, 111, 97, 0.85)',
+                    borderRadius: 4
                 },
                 {
                     label: 'Delay',
                     data: delays,
-                    backgroundColor: 'rgba(26, 26, 26, 0.1)',
-                    borderColor: '#1a1a1a',
-                    pointBackgroundColor: '#1a1a1a',
-                    borderWidth: 2
+                    backgroundColor: 'rgba(26, 26, 26, 0.85)',
+                    borderRadius: 4
                 }
             ]
         },
         options: {
-            responsive: true,
-            maintainAspectRatio: false,
+            ...commonChartOptions,
             scales: {
-                r: {
-                    angleLines: { display: true, color: '#e2e8f0' },
-                    grid: { color: '#e2e8f0' },
-                    pointLabels: { font: { family: 'Figtree', size: 10, weight: '600' } },
-                    ticks: { backdropColor: 'transparent', font: { family: 'Figtree', size: 8 } }
-                }
+                x: { stacked: true, grid: { display: false }, ticks: { font: { family: 'Figtree', size: 9 } } },
+                y: { stacked: true, grid: { color: '#f1f5f9' }, ticks: { font: { family: 'Figtree', size: 9 } } }
             },
             plugins: {
-                legend: { position: 'bottom', labels: { boxWidth: 10, font: { family: 'Figtree', size: 9, weight: '500' } } }
+                ...commonChartOptions.plugins,
+                datalabels: {
+                    display: true,
+                    anchor: 'center',
+                    align: 'center',
+                    color: '#ffffff',
+                    font: { family: 'Figtree', size: 8, weight: '600' },
+                    formatter: (value, context) => {
+                        const dataIndex = context.dataIndex;
+                        const chart = context.chart;
+                        const val1 = Number(chart.data.datasets[0].data[dataIndex]) || 0;
+                        const val2 = Number(chart.data.datasets[1].data[dataIndex]) || 0;
+                        const sum = val1 + val2;
+                        if (sum === 0 || value === 0) return '';
+                        const pct = ((value / sum) * 100).toFixed(0) + '%';
+                        return `${value}\n(${pct})`;
+                    }
+                },
+                tooltip: {
+                    callbacks: {
+                        label: function (context) {
+                            const label = context.dataset.label || '';
+                            const val = context.raw || 0;
+                            const idx = context.dataIndex;
+                            const total = ontimes[idx] + delays[idx];
+                            const pct = total > 0 ? ((val / total) * 100).toFixed(1) : '0.0';
+                            return `${label}: ${val} (${pct}%)`;
+                        }
+                    }
+                }
             }
         }
     });
@@ -706,12 +744,22 @@ function renderAttritionCharts(data) {
         tbodyType.innerHTML = '';
         const types = Object.keys(data.attrition_type_breakdown);
         types.forEach(t => {
-            const tr = document.createElement('tr');
-            tr.innerHTML = `
-                <td><strong>${t}</strong></td>
-                <td class="align-right">${data.attrition_type_breakdown[t].toLocaleString()}</td>
+            const card = document.createElement('div');
+            card.style.flex = '1';
+            card.style.padding = '0.4rem 0.6rem';
+            card.style.background = 'var(--color-bg-card-hover)';
+            card.style.border = '1px solid var(--color-border)';
+            card.style.borderRadius = 'var(--radius-sm)';
+            card.style.display = 'flex';
+            card.style.justifyContent = 'space-between';
+            card.style.alignItems = 'center';
+            card.style.fontSize = '0.75rem';
+            
+            card.innerHTML = `
+                <span style="font-weight: 600; color: var(--color-text-muted);">${t}</span>
+                <strong style="color: var(--color-text-title); font-size: 0.813rem;">${data.attrition_type_breakdown[t].toLocaleString()}</strong>
             `;
-            tbodyType.appendChild(tr);
+            tbodyType.appendChild(card);
         });
     }
 }
@@ -811,6 +859,98 @@ function renderTopExitReasonsList(reasons) {
         `;
         container.appendChild(div);
     });
+}
+
+// Bind Top Attrition Reasons table rows
+function renderAttritionReasonsTotalTable(reasons) {
+    const tbody = document.getElementById('tbody-attrition-reasons-total');
+    if (!tbody) return;
+    tbody.innerHTML = '';
+    
+    if (reasons.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="3" class="align-center">No records found.</td></tr>';
+        return;
+    }
+    
+    reasons.slice(0, 5).forEach(item => {
+        const tr = document.createElement('tr');
+        tr.innerHTML = `
+            <td><strong>${item.reason}</strong></td>
+            <td class="align-right">${item.count}</td>
+            <td class="align-right">${item.pct.toFixed(1)}%</td>
+        `;
+        tbody.appendChild(tr);
+    });
+}
+
+// Populate Grade-wise Attrition table dynamically from loaded exit registry list
+function populateGradeWiseAttrition() {
+    const tbody = document.getElementById('tbody-attrition-grade');
+    if (!tbody) return;
+    tbody.innerHTML = '';
+    
+    const grades = {};
+    state.rawExits.forEach(d => {
+        const g = d.grade || 'Unknown';
+        grades[g] = (grades[g] || 0) + 1;
+    });
+    
+    const totalExits = state.rawExits.length || 1;
+    const sortedGrades = Object.keys(grades).sort();
+    
+    sortedGrades.forEach(g => {
+        const count = grades[g];
+        const pct = ((count / totalExits) * 100).toFixed(1) + '%';
+        
+        const tr = document.createElement('tr');
+        tr.innerHTML = `
+            <td><strong>${g}</strong></td>
+            <td class="align-right">${count}</td>
+            <td class="align-right">${pct}</td>
+        `;
+        tbody.appendChild(tr);
+    });
+}
+
+// Helper to dynamically append OK button sticky footer to dropdown content container
+function appendOkButton(target) {
+    const content = typeof target === 'string' ? document.getElementById(target) : target;
+    if (!content) return;
+    
+    // Check if OK button already exists to avoid duplicate footer inserts
+    if (content.querySelector('.btn-ok-footer')) return;
+    
+    const footer = document.createElement('div');
+    footer.className = 'btn-ok-footer';
+    footer.style.padding = '0.35rem 0.5rem';
+    footer.style.borderTop = '1px solid var(--color-border)';
+    footer.style.textAlign = 'right';
+    footer.style.background = 'var(--color-bg-card-hover)';
+    footer.style.position = 'sticky';
+    footer.style.bottom = '0';
+    footer.style.zIndex = '10';
+    
+    const btn = document.createElement('button');
+    btn.textContent = 'OK';
+    btn.style.fontFamily = 'inherit';
+    btn.style.fontSize = '0.688rem';
+    btn.style.fontWeight = '700';
+    btn.style.padding = '0.2rem 0.6rem';
+    btn.style.backgroundColor = 'var(--color-blue-primary)';
+    btn.style.color = '#ffffff';
+    btn.style.border = 'none';
+    btn.style.borderRadius = 'var(--radius-sm)';
+    btn.style.cursor = 'pointer';
+    
+    btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const wrapper = content.closest('.custom-dropdown');
+        if (wrapper) wrapper.classList.remove('open');
+        updateUI();
+    });
+    
+    footer.appendChild(btn);
+    content.appendChild(footer);
 }
 
 // Bind the tabular registry list at the bottom of the page (Client-side search/sort/pagination on raw API response)
@@ -927,6 +1067,7 @@ function setupEventListeners() {
         const wrapper = document.getElementById(dd.id);
         const trigger = document.getElementById(dd.btnId);
         if (!wrapper || !trigger) return;
+        
         trigger.addEventListener('click', (e) => {
             e.stopPropagation();
             dropdowns.forEach(o => {
@@ -937,12 +1078,28 @@ function setupEventListeners() {
             });
             wrapper.classList.toggle('open');
         });
+        
+        // Prevent clicks inside the dropdown content from bubbling up to document and closing it
+        const content = wrapper.querySelector('.dropdown-content');
+        if (content) {
+            content.addEventListener('click', (e) => {
+                e.stopPropagation();
+            });
+        }
     });
+    
     document.addEventListener('click', () => {
+        let closedAny = false;
         dropdowns.forEach(dd => {
             const el = document.getElementById(dd.id);
-            if (el) el.classList.remove('open');
+            if (el && el.classList.contains('open')) {
+                el.classList.remove('open');
+                closedAny = true;
+            }
         });
+        if (closedAny) {
+            updateUI();
+        }
     });
     
     // 3. Employee type checkbox trigger listeners
@@ -957,9 +1114,14 @@ function setupEventListeners() {
                 });
                 state.filters.employeeType = active.length === 0 ? ['All'] : active;
                 updateEmployeeTypeTriggerLabel();
-                updateUI();
             });
         });
+        
+        // Dynamically append OK button sticky footer to employee type dropdown content
+        const content = customDropdown.querySelector('.dropdown-content');
+        if (content) {
+            appendOkButton(content);
+        }
     }
 
     // 4. Gender trigger

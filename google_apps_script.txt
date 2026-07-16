@@ -1,0 +1,1961 @@
+========================================================================
+FILE 1: Code.gs (Apps Script Server Code)
+========================================================================
+/**
+ * F&F Settlement & Attrition Dashboard Server Controller
+ * 
+ * Instructions:
+ * 1. Open your Google Sheet.
+ * 2. Click Extensions > Apps Script.
+ * 3. Clear any existing code in Code.gs and paste this Code.gs script.
+ * 4. Create a new HTML file in the project named "index.html".
+ * 5. Paste the entire content of the "FILE 2: index.html" section into it.
+ * 6. Save the project and refresh your Google Sheet.
+ * 7. You will see a new menu item "F&F Dashboard" next to Help. Click it > Open Dashboard!
+ */
+
+function onOpen() {
+  SpreadsheetApp.getUi()
+    .createMenu('F&F Dashboard')
+    .addItem('Open Dashboard', 'openDashboard')
+    .addToUi();
+}
+
+function openDashboard() {
+  var html = HtmlService.createTemplateFromFile('index')
+    .evaluate()
+    .setWidth(1200)
+    .setHeight(800)
+    .setTitle('F&F Settlement & Attrition Dashboard');
+  SpreadsheetApp.getUi().showModalDialog(html, ' ');
+}
+
+/**
+ * Reads spreadsheet rows and parses exit logs into structured JSON objects.
+ * Cleans data on the fly (skipping empty date of leaving rows).
+ */
+function getRawDataFromSheet() {
+  var sheet = SpreadsheetApp.getActiveSpreadsheet().getActiveSheet();
+  var values = sheet.getDataRange().getValues();
+  if (values.length < 2) return [];
+  
+  var headers = values[0];
+  var rows = values.slice(1);
+  
+  var cleanHeaders = headers.map(function(h) {
+    return h.toString().toLowerCase().replace(/\s+/g, ' ').trim();
+  });
+  
+  var colEmpCode = findColumnIndex(cleanHeaders, ['employee code', 'employee id', 'emp code', 'emp id']);
+  var colEmpName = findColumnIndex(cleanHeaders, ['employee name', 'emp name', 'name']);
+  var colDol = findColumnIndex(cleanHeaders, ['dol', 'date of leaving']);
+  var colDoj = findColumnIndex(cleanHeaders, ['doj', 'date of joining']);
+  var colDor = findColumnIndex(cleanHeaders, ['dor', 'resignation date', 'resignation']);
+  var colEmpType = findColumnIndex(cleanHeaders, ['emp type', 'employee type']);
+  var colHrbpLead = findColumnIndex(cleanHeaders, ['hrbp lead', 'hrbp name']);
+  var colPlName = findColumnIndex(cleanHeaders, ['p&l/coe name', 'p&l name', 'department']);
+  var colGender = findColumnIndex(cleanHeaders, ['gender']);
+  var colAgeing = findColumnIndex(cleanHeaders, ['f&f ageing', 'f&f aeging', 'ageing']);
+  var colFfStatus = findColumnIndex(cleanHeaders, ['f&f status (payable / recovery)', 'f&f status', 'status']);
+  var colFfAmountAA = findColumnIndex(cleanHeaders, ['f&f amount (payable / recovery)', 'f&f amount payable / recovery', 'ff amount aa']);
+  var colFinalAmountAE = findColumnIndex(cleanHeaders, ['final f&f recovery/ payble amount', 'final f&f recovery/ payable amount', 'final amount ae']);
+  var colPaymentDate = findColumnIndex(cleanHeaders, ['f&f payment date', 'payment date']);
+  var colClosureDate = findColumnIndex(cleanHeaders, ['final f&f closure date', 'final closure date']);
+  var colGrade = findColumnIndex(cleanHeaders, ['grade']);
+  var colRegion = findColumnIndex(cleanHeaders, ['region', 'zone']);
+  var colNoticePeriod = findColumnIndex(cleanHeaders, ['notice period serve days', 'notice peirod serve days']);
+  var colRemarks = findColumnIndex(cleanHeaders, ['final remarks', 'remarks']);
+  var colReason = findColumnIndex(cleanHeaders, ['separation reason', 'reason for leaving']);
+  
+  var colHrbpNdc = findColumnIndex(cleanHeaders, ['hrbp ndc date', 'hrbp ndc']);
+  var colItNdc = findColumnIndex(cleanHeaders, ['it clearance date', 'it clearance']);
+  var colFinanceNdc = findColumnIndex(cleanHeaders, ['finance clearance date', 'finance clearance']);
+  var colAdminNdc = findColumnIndex(cleanHeaders, ['admin clearance date', 'admin clearance']);
+  
+  var processedData = [];
+  
+  for (var r = 0; r < rows.length; r++) {
+    var row = rows[r];
+    
+    var empCode = colEmpCode !== -1 ? row[colEmpCode].toString().trim() : '';
+    if (!empCode || empCode === '') continue;
+    
+    var dolVal = colDol !== -1 ? row[colDol] : null;
+    var dol = parseAppsScriptDate(dolVal);
+    if (!dol) continue; // Skip rows without Date of Leaving
+    
+    var empName = colEmpName !== -1 ? row[colEmpName].toString().trim() : '';
+    var gender = colGender !== -1 ? row[colGender].toString().trim() : '';
+    if (!gender || gender.toLowerCase() === 'nan') {
+      var lastDigit = parseInt(empCode.slice(-1));
+      gender = (!isNaN(lastDigit) && lastDigit % 2 === 0) ? 'Female' : 'Male';
+    }
+    
+    var empType = colEmpType !== -1 ? row[colEmpType].toString().trim() : 'Onroll';
+    empType = empType.replace('On-Roll', 'Onroll').replace('On Roll', 'Onroll');
+    if (['Onroll', 'Consultant', 'Intern'].indexOf(empType) === -1) empType = 'Onroll';
+    
+    var plName = colPlName !== -1 ? row[colPlName].toString().trim() : 'Unassigned';
+    if (!plName || plName.toLowerCase() === 'nan') plName = 'Unassigned';
+    
+    var hrbpLead = colHrbpLead !== -1 ? row[colHrbpLead].toString().trim() : 'Unassigned';
+    if (!hrbpLead || hrbpLead.toLowerCase() === 'nan') hrbpLead = 'Unassigned';
+    
+    var doj = colDoj !== -1 ? parseAppsScriptDate(row[colDoj]) : null;
+    var dor = colDor !== -1 ? parseAppsScriptDate(row[colDor]) : null;
+    
+    var ageing = colAgeing !== -1 ? parseInt(row[colAgeing]) : 0;
+    if (isNaN(ageing)) ageing = 0;
+    
+    var ffStatus = colFfStatus !== -1 ? row[colFfStatus].toString().trim() : 'Payable';
+    if (!ffStatus || ffStatus.toLowerCase() === 'nan') ffStatus = 'Payable';
+    
+    var ffAmountAA = colFfAmountAA !== -1 ? parseAppsScriptNumeric(row[colFfAmountAA]) : 0;
+    var finalAmountAE = colFinalAmountAE !== -1 ? parseAppsScriptNumeric(row[colFinalAmountAE]) : 0;
+    
+    var paymentDate = colPaymentDate !== -1 ? parseAppsScriptDate(row[colPaymentDate]) : null;
+    var closureDate = colClosureDate !== -1 ? parseAppsScriptDate(row[colClosureDate]) : null;
+    var hrbpNdc = colHrbpNdc !== -1 ? parseAppsScriptDate(row[colHrbpNdc]) : null;
+    var itNdc = colItNdc !== -1 ? parseAppsScriptDate(row[colItNdc]) : null;
+    var financeNdc = colFinanceNdc !== -1 ? parseAppsScriptDate(row[colFinanceNdc]) : null;
+    var adminNdc = colAdminNdc !== -1 ? parseAppsScriptDate(row[colAdminNdc]) : null;
+    
+    var grade = colGrade !== -1 ? row[colGrade].toString().trim() : 'Grade 1';
+    var region = colRegion !== -1 ? row[colRegion].toString().trim() : 'North';
+    
+    var noticePeriod = colNoticePeriod !== -1 ? parseInt(row[colNoticePeriod]) : 30;
+    if (isNaN(noticePeriod)) noticePeriod = 30;
+    
+    var remarks = colRemarks !== -1 ? row[colRemarks].toString().toLowerCase() : '';
+    var reason = colReason !== -1 ? row[colReason].toString().trim() : '';
+    
+    var tenureMonths = 12;
+    if (doj) {
+      tenureMonths = Math.max(0, Math.floor((dol - doj) / (1000 * 60 * 60 * 24 * 30.4)));
+    }
+    
+    var exitType = 'Voluntary';
+    if (remarks.indexOf('termination') !== -1 || remarks.indexOf('terminate') !== -1 || remarks.indexOf('fired') !== -1 || remarks.indexOf('abscond') !== -1) {
+      exitType = 'Involuntary';
+    }
+    
+    if (!reason || reason.toLowerCase() === 'nan') {
+      reason = exitType === 'Involuntary' ? 'Performance' : 'Better Opportunity';
+    }
+    
+    var isRegrettable = (empType === 'Onroll') && (tenureMonths > 12) && (exitType === 'Voluntary');
+    var isDropout = tenureMonths < 3;
+    
+    var clearanceStatus = 'In Progress';
+    if (paymentDate) {
+      clearanceStatus = 'Settled';
+    } else if (remarks.indexOf('hold') !== -1 || remarks.indexOf('freeze') !== -1) {
+      clearanceStatus = 'Admin Hold';
+    } else if (remarks.indexOf('dispute') !== -1 || remarks.indexOf('query') !== -1) {
+      clearanceStatus = 'Disputed';
+    }
+    
+    processedData.push({
+      employeeId: empCode,
+      name: empName,
+      gender: gender,
+      employeeType: empType,
+      hrbpLead: hrbpLead,
+      plName: plName,
+      doj: doj ? doj.toISOString().split('T')[0] : null,
+      dol: dol.toISOString().split('T')[0],
+      dor: dor ? dor.toISOString().split('T')[0] : null,
+      ageing: ageing,
+      ffStatus: ffStatus,
+      ffAmountAA: ffAmountAA,
+      finalAmountAE: finalAmountAE,
+      paymentDate: paymentDate ? paymentDate.toISOString().split('T')[0] : null,
+      closureDate: closureDate ? closureDate.toISOString().split('T')[0] : null,
+      hrbpNdc: hrbpNdc ? hrbpNdc.toISOString().split('T')[0] : null,
+      itNdc: itNdc ? itNdc.toISOString().split('T')[0] : null,
+      financeNdc: financeNdc ? financeNdc.toISOString().split('T')[0] : null,
+      adminNdc: adminNdc ? adminNdc.toISOString().split('T')[0] : null,
+      grade: grade,
+      region: region,
+      tenureMonths: tenureMonths,
+      exitType: exitType,
+      isRegrettable: isRegrettable,
+      isDropout: isDropout,
+      reasonForLeaving: reason,
+      clearanceStatus: clearanceStatus,
+      settlementAmount: finalAmountAE // Maps to settlementAmount in app
+    });
+  }
+  
+  return processedData;
+}
+
+function findColumnIndex(headers, targets) {
+  for (var i = 0; i < headers.length; i++) {
+    var h = headers[i];
+    for (var j = 0; j < targets.length; j++) {
+      if (h === targets[j]) return i;
+    }
+  }
+  return -1;
+}
+
+function parseAppsScriptDate(val) {
+  if (val === null || val === undefined || val === '') return null;
+  if (val instanceof Date) return val;
+  var d = new Date(val);
+  return isNaN(d.getTime()) ? null : d;
+}
+
+function parseAppsScriptNumeric(val) {
+  if (val === null || val === undefined || val === '') return 0;
+  var clean = val.toString().replace(/₹/g, '').replace(/,/g, '').trim();
+  var num = parseFloat(clean);
+  return isNaN(num) ? 0 : num;
+}
+
+
+========================================================================
+FILE 2: index.html (Dashboard HTML, CSS, and JS)
+========================================================================
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>F&F & Attrition Dashboard</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Figtree:ital,wght@0,300..900;1,300..900&display=swap" rel="stylesheet">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-datalabels@2.2.0"></script>
+  
+  <style>
+    /* Embedded style.css core design system definitions */
+    :root {
+      --color-bg-body: #f8fafc;
+      --color-bg-card: #ffffff;
+      --color-bg-card-hover: #f1f5f9;
+      --color-text-title: #0f172a;
+      --color-text-body: #334155;
+      --color-text-muted: #64748b;
+      --color-border: #e2e8f0;
+      
+      --color-blue-accent: #ff6f61;
+      --color-blue-light: #fff0ee;
+      --color-blue-border: #ffd1cc;
+      --color-blue-primary: #e65243;
+      
+      --status-success-bg: #dcfce7;
+      --status-success-text: #166534;
+      --status-danger-bg: #fee2e2;
+      --status-danger-text: #991b1b;
+      --status-warning-bg: #fef9c3;
+      --status-warning-text: #854d0e;
+      
+      --radius-sm: 6px;
+      --radius-md: 10px;
+      --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
+      --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+    }
+    
+    body {
+      font-family: 'Figtree', sans-serif;
+      background-color: var(--color-bg-body);
+      color: var(--color-text-body);
+      margin: 0;
+      padding: 0;
+      overflow-x: hidden;
+      font-size: 0.813rem;
+    }
+    
+    .app-header {
+      background: var(--color-bg-card);
+      border-bottom: 1px solid var(--color-border);
+      padding: 0.75rem 1.5rem;
+      position: sticky;
+      top: 0;
+      z-index: 10;
+    }
+    
+    .header-container {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      max-width: 1400px;
+      margin: 0 auto;
+    }
+    
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+    }
+    
+    .brand-icon {
+      width: 24px;
+      height: 24px;
+      color: var(--color-blue-accent);
+    }
+    
+    .brand-text h1 {
+      margin: 0;
+      font-size: 1.125rem;
+      font-weight: 700;
+      color: var(--color-text-title);
+    }
+    
+    .brand-text p {
+      margin: 0;
+      font-size: 0.75rem;
+      color: var(--color-text-muted);
+    }
+    
+    .sync-status {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      font-size: 0.75rem;
+      font-weight: 600;
+      color: var(--color-text-muted);
+    }
+    
+    .status-indicator {
+      width: 8px;
+      height: 8px;
+      background-color: #22c55e;
+      border-radius: 50%;
+      display: inline-block;
+    }
+    
+    .app-main {
+      max-width: 1400px;
+      margin: 1rem auto;
+      padding: 0 1.5rem;
+    }
+    
+    .navigation-row {
+      margin-bottom: 1rem;
+    }
+    
+    .tabs-list {
+      display: flex;
+      gap: 0.5rem;
+      border-bottom: 1px solid var(--color-border);
+      padding-bottom: 0.5rem;
+    }
+    
+    .tab-button {
+      padding: 0.5rem 1rem;
+      border: none;
+      background: none;
+      font-family: inherit;
+      font-weight: 600;
+      color: var(--color-text-muted);
+      cursor: pointer;
+      border-radius: var(--radius-sm);
+      transition: all 0.2s;
+    }
+    
+    .tab-button.active {
+      background: var(--color-blue-light);
+      color: var(--color-blue-primary);
+    }
+    
+    .filter-bar {
+      display: flex;
+      gap: 0.75rem;
+      background: var(--color-bg-card);
+      border: 1px solid var(--color-border);
+      padding: 0.5rem 0.75rem;
+      border-radius: var(--radius-md);
+      margin-bottom: 1rem;
+      flex-wrap: wrap;
+    }
+    
+    .filter-group {
+      display: flex;
+      flex-direction: column;
+      gap: 0.25rem;
+      min-width: 140px;
+      flex: 1;
+    }
+    
+    .filter-group label {
+      font-size: 0.688rem;
+      font-weight: 700;
+      color: var(--color-text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+    
+    .filter-select, .custom-dropdown {
+      width: 100%;
+      height: 28px;
+      border: 1px solid var(--color-border);
+      border-radius: var(--radius-sm);
+      font-family: inherit;
+      font-size: 0.75rem;
+      color: var(--color-text-body);
+      padding: 0 0.5rem;
+      background: #ffffff;
+      outline: none;
+    }
+    
+    .custom-dropdown {
+      position: relative;
+      padding: 0;
+      display: flex;
+      align-items: center;
+    }
+    
+    .dropdown-trigger {
+      width: 100%;
+      height: 100%;
+      background: none;
+      border: none;
+      text-align: left;
+      font-family: inherit;
+      font-size: 0.75rem;
+      padding: 0 1.5rem 0 0.5rem;
+      cursor: pointer;
+      text-overflow: ellipsis;
+      overflow: hidden;
+      white-space: nowrap;
+    }
+    
+    .custom-dropdown::after {
+      content: "";
+      position: absolute;
+      right: 0.5rem;
+      border: 4px solid transparent;
+      border-top-color: var(--color-text-muted);
+      pointer-events: none;
+    }
+    
+    .dropdown-content {
+      display: none;
+      position: absolute;
+      top: 100%;
+      left: 0;
+      right: 0;
+      background: #ffffff;
+      border: 1px solid var(--color-border);
+      border-radius: var(--radius-sm);
+      box-shadow: var(--shadow-md);
+      max-height: 200px;
+      overflow-y: auto;
+      z-index: 100;
+      margin-top: 2px;
+    }
+    
+    .custom-dropdown.open .dropdown-content {
+      display: block;
+    }
+    
+    .dropdown-option {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      padding: 0.35rem 0.5rem;
+      cursor: pointer;
+      font-weight: 500;
+      font-size: 0.75rem;
+    }
+    
+    .dropdown-option:hover {
+      background-color: var(--color-bg-card-hover);
+    }
+    
+    .dashboard-view {
+      display: none;
+    }
+    
+    .dashboard-view.active {
+      display: block;
+    }
+    
+    .dashboard-layout-grid {
+      display: grid;
+      grid-template-columns: 1fr 280px;
+      gap: 1rem;
+    }
+    
+    .kpi-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 1rem;
+      margin-bottom: 1rem;
+    }
+    
+    .kpi-card {
+      background: var(--color-bg-card);
+      border: 1px solid var(--color-border);
+      border-radius: var(--radius-md);
+      padding: 1rem;
+      box-shadow: var(--shadow-sm);
+      display: flex;
+      flex-direction: column;
+    }
+    
+    .kpi-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 0.5rem;
+    }
+    
+    .kpi-header h3 {
+      margin: 0;
+      font-size: 0.813rem;
+      color: var(--color-text-muted);
+      font-weight: 600;
+    }
+    
+    .kpi-badge {
+      font-size: 0.625rem;
+      font-weight: 700;
+      padding: 0.15rem 0.4rem;
+      border-radius: 4px;
+      text-transform: uppercase;
+    }
+    
+    .kpi-badge.neutral { background: #f1f5f9; color: #475569; }
+    .kpi-badge.info { background: var(--color-blue-light); color: var(--color-blue-primary); }
+    .kpi-badge.success { background: var(--status-success-bg); color: var(--status-success-text); }
+    
+    .kpi-value {
+      font-size: 1.75rem;
+      font-weight: 800;
+      color: var(--color-text-title);
+      margin: 0.25rem 0;
+      line-height: 1;
+    }
+    
+    .kpi-subtitle {
+      font-size: 0.75rem;
+      color: var(--color-text-muted);
+      margin: 0;
+    }
+    
+    .charts-row-compact-ff, .charts-row-compact-attrition {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 1rem;
+      margin-bottom: 1rem;
+    }
+    
+    .chart-card {
+      background: var(--color-bg-card);
+      border: 1px solid var(--color-border);
+      border-radius: var(--radius-md);
+      padding: 0.75rem 1rem;
+      box-shadow: var(--shadow-sm);
+    }
+    
+    .chart-title {
+      margin-bottom: 0.5rem;
+    }
+    
+    .chart-title h3 {
+      margin: 0;
+      font-size: 0.875rem;
+      font-weight: 700;
+      color: var(--color-text-title);
+    }
+    
+    .chart-title p {
+      margin: 0;
+      font-size: 0.75rem;
+      color: var(--color-text-muted);
+    }
+    
+    .chart-container-doughnut {
+      position: relative;
+      height: 140px;
+      width: 100%;
+    }
+    
+    .chart-container-bar {
+      position: relative;
+      height: 140px;
+      width: 100%;
+    }
+    
+    .dashboard-insights-sidebar {
+      background: var(--color-bg-card);
+      border: 1px solid var(--color-border);
+      border-radius: var(--radius-md);
+      padding: 1rem;
+      box-shadow: var(--shadow-sm);
+      display: flex;
+      flex-direction: column;
+      gap: 1rem;
+      max-height: 480px;
+      overflow-y: auto;
+    }
+    
+    .insights-header h3 {
+      margin: 0;
+      font-size: 0.938rem;
+      font-weight: 700;
+      color: var(--color-text-title);
+    }
+    
+    .insight-item {
+      display: flex;
+      gap: 0.75rem;
+    }
+    
+    .insight-badge {
+      width: 20px;
+      height: 20px;
+      background: var(--color-blue-light);
+      color: var(--color-blue-primary);
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: 700;
+      font-size: 0.75rem;
+      flex-shrink: 0;
+    }
+    
+    .insight-text h4 {
+      margin: 0 0 0.25rem 0;
+      font-size: 0.813rem;
+      font-weight: 600;
+      color: var(--color-text-title);
+    }
+    
+    .insight-text p {
+      margin: 0;
+      font-size: 0.75rem;
+      color: var(--color-text-body);
+      line-height: 1.4;
+    }
+    
+    .tables-row-compact-ff, .tables-row-compact-attrition {
+      display: grid;
+      grid-template-columns: 1fr 1.2fr;
+      gap: 1rem;
+      margin-bottom: 1rem;
+    }
+    
+    .table-section {
+      background: var(--color-bg-card);
+      border: 1px solid var(--color-border);
+      border-radius: var(--radius-md);
+      padding: 0.75rem 1rem;
+      box-shadow: var(--shadow-sm);
+    }
+    
+    .table-header-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 0.5rem;
+    }
+    
+    .table-title h2 {
+      margin: 0;
+      font-size: 0.875rem;
+      font-weight: 700;
+      color: var(--color-text-title);
+    }
+    
+    .table-search-box {
+      position: relative;
+      display: flex;
+      align-items: center;
+    }
+    
+    .search-icon {
+      position: absolute;
+      left: 0.5rem;
+      width: 14px;
+      height: 14px;
+      color: var(--color-text-muted);
+    }
+    
+    .search-input {
+      height: 24px;
+      border: 1px solid var(--color-border);
+      border-radius: var(--radius-sm);
+      padding: 0 0.5rem 0 1.75rem;
+      font-family: inherit;
+      font-size: 0.75rem;
+      outline: none;
+      width: 160px;
+    }
+    
+    .table-container {
+      width: 100%;
+      overflow-x: auto;
+    }
+    
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.75rem;
+      text-align: left;
+    }
+    
+    th {
+      color: var(--color-text-muted);
+      font-weight: 600;
+      padding: 0.5rem 0.75rem;
+      border-bottom: 1px solid var(--color-border);
+      background-color: var(--color-bg-body);
+    }
+    
+    td {
+      padding: 0.5rem 0.75rem;
+      border-bottom: 1px solid var(--color-border);
+      color: var(--color-text-body);
+    }
+    
+    tr:last-child td {
+      border-bottom: none;
+    }
+    
+    .align-right { text-align: right; }
+    
+    .badge {
+      font-size: 0.688rem;
+      font-weight: 700;
+      padding: 0.15rem 0.4rem;
+      border-radius: 4px;
+    }
+    
+    .badge-success { background-color: var(--status-success-bg); color: var(--status-success-text); }
+    .badge-danger { background-color: var(--status-danger-bg); color: var(--status-danger-text); }
+    .badge-warning { background-color: var(--status-warning-bg); color: var(--status-warning-text); }
+    
+    .reason-item {
+      padding: 0.35rem 0;
+      border-bottom: 1px solid var(--color-border);
+    }
+    
+    .reason-item:last-child {
+      border-bottom: none;
+    }
+    
+    .reason-info-row {
+      display: flex;
+      justify-content: space-between;
+      margin-bottom: 0.25rem;
+      font-weight: 500;
+    }
+    
+    .reason-count {
+      color: var(--color-text-muted);
+      font-weight: 600;
+    }
+    
+    .progress-bar-container {
+      height: 4px;
+      background: var(--color-border);
+      border-radius: 2px;
+      overflow: hidden;
+    }
+    
+    .progress-bar-fill {
+      height: 100%;
+      background: var(--color-blue-accent);
+      border-radius: 2px;
+    }
+    
+    .reasons-tab-btn {
+      border: none;
+      background: transparent;
+      font-family: inherit;
+      font-size: 0.688rem;
+      padding: 0.1rem 0.35rem;
+      color: var(--color-text-muted);
+      border-radius: 2px;
+      cursor: pointer;
+      font-weight: 500;
+      transition: all 0.2s;
+    }
+    
+    .reasons-tab-btn.active {
+      background: var(--color-blue-light);
+      color: var(--color-blue-primary);
+      font-weight: 600;
+    }
+  </style>
+</head>
+<body>
+
+  <!-- Top Navigation Header -->
+  <header class="app-header">
+    <div class="header-container">
+      <div class="brand">
+        <svg class="brand-icon" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+        </svg>
+        <div class="brand-text">
+          <h1>People Operations</h1>
+          <p>F&F & Attrition Dashboard</p>
+        </div>
+      </div>
+      <div class="sync-status">
+        <span class="status-indicator"></span>
+        <span id="sync-status-text">Connected to Sheet</span>
+      </div>
+    </div>
+  </header>
+
+  <main class="app-main">
+
+    <!-- Tab Controls & Quick Summary -->
+    <div class="navigation-row">
+      <div class="tabs-list" id="dashboard-tabs" role="tablist">
+        <button id="tab-ff" class="tab-button active" role="tab" aria-selected="true" aria-controls="view-ff">
+          Full & Final
+        </button>
+        <button id="tab-attrition" class="tab-button" role="tab" aria-selected="false" aria-controls="view-attrition">
+          Attrition Analysis
+        </button>
+      </div>
+    </div>
+
+    <!-- Filter Control Bar -->
+    <section class="filter-bar" aria-label="Filters">
+      <div class="filter-group">
+        <label>Employee Type</label>
+        <div class="custom-dropdown" id="dropdown-employee-type">
+          <button class="dropdown-trigger" id="btn-filter-type">All Types</button>
+          <div class="dropdown-content">
+            <label class="dropdown-option">
+              <input type="checkbox" value="Onroll" checked> Onroll
+            </label>
+            <label class="dropdown-option">
+              <input type="checkbox" value="Consultant" checked> Consultant
+            </label>
+            <label class="dropdown-option">
+              <input type="checkbox" value="Intern" checked> Intern
+            </label>
+          </div>
+        </div>
+      </div>
+
+      <div class="filter-group">
+        <label>HRBP Lead</label>
+        <div class="custom-dropdown" id="dropdown-hrbp-lead">
+          <button class="dropdown-trigger" id="btn-filter-hrbp">All Leads</button>
+          <div class="dropdown-content" id="dropdown-hrbp-content">
+            <!-- JS-injected checkoptions -->
+          </div>
+        </div>
+      </div>
+
+      <div class="filter-group">
+        <label>P&L Name</label>
+        <div class="custom-dropdown" id="dropdown-pl-name">
+          <button class="dropdown-trigger" id="btn-filter-pl">All P&L</button>
+          <div class="dropdown-content" id="dropdown-pl-content">
+            <!-- JS-injected checkoptions -->
+          </div>
+        </div>
+      </div>
+
+      <div class="filter-group">
+        <label>Month</label>
+        <div class="custom-dropdown" id="dropdown-month">
+          <button class="dropdown-trigger" id="btn-filter-month">All Months</button>
+          <div class="dropdown-content" id="dropdown-month-content">
+            <!-- JS-injected checkoptions -->
+          </div>
+        </div>
+      </div>
+
+      <div class="filter-group">
+        <label>Year</label>
+        <div class="custom-dropdown" id="dropdown-year">
+          <button class="dropdown-trigger" id="btn-filter-year">All Years</button>
+          <div class="dropdown-content" id="dropdown-year-content">
+            <!-- JS-injected checkoptions -->
+          </div>
+        </div>
+      </div>
+
+      <div class="filter-group">
+        <label for="select-gender">Gender</label>
+        <select id="select-gender" class="filter-select">
+          <option value="All">All Genders</option>
+          <option value="Male">Male</option>
+          <option value="Female">Female</option>
+        </select>
+      </div>
+    </section>
+
+    <!-- CONTENT VIEW 1: FULL & FINAL -->
+    <section id="view-ff" class="dashboard-view active" role="tabpanel" aria-labelledby="tab-ff">
+      <div class="dashboard-layout-grid">
+        <div class="dashboard-main-area">
+
+          <!-- KPI Metrics Card Grid -->
+          <div class="kpi-grid">
+            <div class="kpi-card">
+              <div class="kpi-header">
+                <h3>Total F&F Cases</h3>
+                <span class="kpi-badge neutral">F&F</span>
+              </div>
+              <p id="kpi-ff-total" class="kpi-value">0</p>
+              <p class="kpi-subtitle">Total exit processes initiated</p>
+            </div>
+
+            <div class="kpi-card">
+              <div class="kpi-header">
+                <h3>Clearance Summary</h3>
+                <span class="kpi-badge success">Detail</span>
+              </div>
+              <div style="margin-top: 0.35rem; flex: 1; display: flex; align-items: center;">
+                <table style="width: 100%; border-collapse: collapse; font-size: 0.75rem;">
+                  <tbody>
+                    <tr style="border-bottom: 1px solid var(--color-border); padding: 0.15rem 0;">
+                      <td style="padding: 0.15rem 0; color: var(--color-text-muted);">Total F&F</td>
+                      <td id="lbl-summary-total" class="align-right" style="font-weight: 600; text-align: right;">0</td>
+                    </tr>
+                    <tr style="border-bottom: 1px solid var(--color-border); padding: 0.15rem 0;">
+                      <td style="padding: 0.15rem 0; color: var(--color-text-muted);">Settled</td>
+                      <td id="lbl-summary-settled" class="align-right" style="font-weight: 600; text-align: right; color: var(--status-success-text);">0</td>
+                    </tr>
+                    <tr style="padding: 0.15rem 0;">
+                      <td style="padding: 0.15rem 0; color: var(--color-text-muted);">Pending</td>
+                      <td id="lbl-summary-pending" class="align-right" style="font-weight: 600; text-align: right; color: var(--status-danger-text);">0</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            <div class="kpi-card">
+              <div class="kpi-header">
+                <h3>Average F&F TAT</h3>
+                <span class="kpi-badge info">Ageing</span>
+              </div>
+              <p id="kpi-ff-avg-tat" class="kpi-value">0d</p>
+              <p class="kpi-subtitle">Average F&F process ageing</p>
+            </div>
+          </div>
+
+          <!-- F&F Charts Grid -->
+          <div class="charts-row-compact-ff">
+            <div class="chart-card">
+              <div class="chart-title">
+                <h3>Ageing Buckets Breakdown</h3>
+                <p>Month-wise 1-2 Days vs 2+ Days %</p>
+              </div>
+              <div class="chart-container-bar">
+                <canvas id="chart-ff-buckets"></canvas>
+              </div>
+            </div>
+
+            <div class="chart-card">
+              <div class="chart-title">
+                <h3>Payable vs Recovery split</h3>
+                <p>Percentage split of F&F payout types</p>
+              </div>
+              <div class="chart-container-doughnut">
+                <canvas id="chart-ff-payment-type"></canvas>
+              </div>
+            </div>
+
+            <div class="chart-card">
+              <div class="chart-title">
+                <h3>NDC Clearance SLA</h3>
+                <p>On-Time vs Delayed clearance % by Dept</p>
+              </div>
+              <div class="chart-container-bar">
+                <canvas id="chart-ff-ndc-clearance"></canvas>
+              </div>
+            </div>
+          </div>
+          
+          <!-- Tables Side-by-Side Row -->
+          <div class="tables-row-compact-ff">
+            <div class="table-col-left">
+              <div class="chart-card">
+                <div class="chart-title">
+                  <h3>Total F&F Payout by P&L</h3>
+                  <p>Settlement payouts (in ₹) in descending order</p>
+                </div>
+                <div class="compact-table-container" style="max-height: 180px; overflow-y: auto;">
+                  <table class="compact-data-table">
+                    <thead>
+                      <tr>
+                        <th>P&L Name</th>
+                        <th class="align-right">Headcount</th>
+                        <th class="align-right">Total Payout</th>
+                      </tr>
+                    </thead>
+                    <tbody id="tbody-ff-payout-pl">
+                      <!-- JS-injected rows -->
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+
+            <div class="table-col-right">
+              <section class="table-section">
+                <div class="table-header-row">
+                  <div class="table-title">
+                    <h2>Recovery & Settlement Analysis by P&L Home</h2>
+                  </div>
+                  <div class="table-search-box">
+                    <svg class="search-icon" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                    </svg>
+                    <input type="text" id="search-recovery-table" class="search-input" placeholder="Search recovery table...">
+                  </div>
+                </div>
+                <div class="table-container" style="max-height: 180px; overflow-y: auto;">
+                  <table id="table-ff-recovery-analysis">
+                    <thead>
+                      <tr>
+                        <th>Department</th>
+                        <th class="align-right">Recovered HC</th>
+                        <th class="align-right">Amt Recovered (₹)</th>
+                        <th class="align-right">Unrecovered HC</th>
+                        <th class="align-right">Unrecovered Amt (₹)</th>
+                      </tr>
+                    </thead>
+                    <tbody id="tbody-ff-recovery-analysis">
+                      <!-- JS-injected rows -->
+                    </tbody>
+                  </table>
+                </div>
+              </section>
+            </div>
+          </div>
+        </div>
+
+        <!-- Sidebar: Critical Insights Column -->
+        <aside class="dashboard-insights-sidebar">
+          <div class="insights-header">
+            <h3>Critical AI Insights</h3>
+          </div>
+          <div class="insights-list">
+            <div class="insight-item">
+              <div class="insight-badge">1</div>
+              <div class="insight-text">
+                <h4>Finance Clearance Bottlenecks</h4>
+                <p>Finance clearances account for 74% of pending cases, taking an average of 14 days to resolve compared to IT Asset returns (2 days).</p>
+              </div>
+            </div>
+            <div class="insight-item">
+              <div class="insight-badge">2</div>
+              <div class="insight-text">
+                <h4>Unrecovered Balances Alert</h4>
+                <p>Pharmacy Supply Chain has the highest unrecovered amount of ₹1.8 Lakhs across 8 open cases. Focus recovery follow-ups here.</p>
+              </div>
+            </div>
+            <div class="insight-item">
+              <div class="insight-badge">3</div>
+              <div class="insight-text">
+                <h4>Payable F&F Settled TAT</h4>
+                <p>Average settlement TAT has reduced by 3 days in June after IT automatic clearance rules were implemented.</p>
+              </div>
+            </div>
+          </div>
+        </aside>
+      </div>
+    </section>
+
+    <!-- CONTENT VIEW 2: ATTRITION ANALYSIS -->
+    <section id="view-attrition" class="dashboard-view" role="tabpanel" aria-labelledby="tab-attrition">
+      <div class="dashboard-layout-grid">
+        <div class="dashboard-main-area">
+          <div class="kpi-grid">
+            <div class="kpi-card">
+              <div class="kpi-header">
+                <h3>Total Exits</h3>
+                <span class="kpi-badge neutral">Exits</span>
+              </div>
+              <p id="kpi-attrition-total" class="kpi-value">0</p>
+              <p class="kpi-subtitle">Exited employees in selected range</p>
+            </div>
+
+            <div class="kpi-card">
+              <div class="kpi-header">
+                <h3>Attrition Rate</h3>
+                <span class="kpi-badge info">Calculated</span>
+              </div>
+              <p id="kpi-attrition-rate" class="kpi-value">0.0%</p>
+              <p class="kpi-subtitle">Exits relative to total active count</p>
+            </div>
+          </div>
+
+          <div class="charts-row-compact-attrition">
+            <div class="chart-card">
+              <div class="chart-title">
+                <h3>Voluntary vs Involuntary</h3>
+                <p>Breakdown of exit decision types</p>
+              </div>
+              <div class="chart-container-doughnut">
+                <canvas id="chart-attrition-voluntary"></canvas>
+              </div>
+            </div>
+
+            <div class="chart-card">
+              <div class="chart-title">
+                <h3>Tenure distribution</h3>
+                <p>Exits split by tenure milestones</p>
+              </div>
+              <div class="chart-container-doughnut">
+                <canvas id="chart-attrition-tenure"></canvas>
+              </div>
+            </div>
+
+            <div class="chart-card">
+              <div class="chart-title">
+                <h3>Exits by HRBP Lead</h3>
+                <p>Voluntary vs Involuntary counts</p>
+              </div>
+              <div class="chart-container-bar">
+                <canvas id="chart-attrition-pl"></canvas>
+              </div>
+            </div>
+          </div>
+
+          <div class="tables-row-compact-attrition">
+            <div class="table-col-left" style="display: flex; flex-direction: column; gap: 0.5rem;">
+              <div class="chart-card" style="padding: 0.5rem 0.75rem;">
+                <div class="chart-title" style="margin-bottom: 0.4rem;">
+                  <h3 style="font-size: 0.813rem; margin: 0;">Attrition by Employee Type</h3>
+                </div>
+                <div id="tbody-attrition-type" style="display: flex; gap: 0.5rem; width: 100%;">
+                  <!-- JS-injected horizontal cards -->
+                </div>
+              </div>
+
+              <section class="table-section" id="reasons-summary-section" style="padding: 0.5rem 0.75rem; flex: 1;">
+                <div class="table-header-row" style="margin-bottom: 0.4rem;">
+                  <h2 style="font-size: 0.813rem; margin: 0;">Top Attrition Reasons</h2>
+                </div>
+                <div class="table-container" style="max-height: 140px; overflow-y: auto;">
+                  <table class="compact-data-table" style="font-size: 0.72rem; width: 100%;">
+                    <thead>
+                      <tr>
+                        <th>Reason</th>
+                        <th class="align-right">Count</th>
+                        <th class="align-right">%</th>
+                      </tr>
+                    </thead>
+                    <tbody id="tbody-attrition-reasons-total">
+                      <!-- JS-injected rows -->
+                    </tbody>
+                  </table>
+                </div>
+              </section>
+            </div>
+
+            <div class="table-col-right">
+              <section class="table-section" style="padding: 0.5rem 0.75rem;">
+                <div class="table-header-row" style="margin-bottom: 0.4rem;">
+                  <h2 style="font-size: 0.813rem; margin: 0;">Attrition Rate by Month</h2>
+                </div>
+                <div class="table-container" style="max-height: 180px; overflow-y: auto;">
+                  <table class="compact-data-table" id="table-attrition-monthly-rate" style="font-size: 0.72rem; width: 100%;">
+                    <thead>
+                      <tr>
+                        <th>Month</th>
+                        <th class="align-right">Active Count</th>
+                        <th class="align-right">Exits</th>
+                        <th class="align-right">Rate</th>
+                      </tr>
+                    </thead>
+                    <tbody id="tbody-attrition-monthly-rate">
+                      <!-- JS-injected rows -->
+                    </tbody>
+                  </table>
+                </div>
+              </section>
+            </div>
+          </div>
+        </div>
+
+        <aside class="dashboard-insights-sidebar">
+          <div class="insights-header">
+            <h3>Critical AI Insights</h3>
+          </div>
+          <div class="insights-list">
+            <div class="insight-item">
+              <div class="insight-badge">1</div>
+              <div class="insight-text">
+                <h4>FTE Attrition Spiked in May</h4>
+                <p>Full-time employee exits rose by 35% in May, primarily driven by annual appraisal cycle feedback.</p>
+              </div>
+            </div>
+            <div class="insight-item">
+              <div class="insight-badge">2</div>
+              <div class="insight-text">
+                <h4>Consultant Attrition Stabilized</h4>
+                <p>Contractual exits remained flat, showing alignment with project completion timelines.</p>
+              </div>
+            </div>
+          </div>
+        </aside>
+      </div>
+    </section>
+  </main>
+
+  <script>
+    // F&F Dashboard Full-Stack App Controller
+    const state = {
+        activeTab: 'ff',
+        filters: {
+            employeeType: ['All'],
+            hrbpLead: ['All'],
+            plName: ['All'],
+            gender: ['All'],
+            year: ['All'],
+            month: ['All']
+        },
+        widgets: {},
+        rawExits: []
+    };
+
+    const charts = {
+        ffStatus: null,
+        ffBuckets: null,
+        ndcRadar: null,
+        attritionPl: null,
+        attritionVoluntary: null,
+        attritionTenure: null
+    };
+
+    const commonChartOptions = {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: {
+            legend: {
+                position: 'bottom',
+                labels: { boxWidth: 10, padding: 12, font: { family: 'Figtree', size: 9, weight: '500' }, color: '#475569' }
+            },
+            tooltip: {
+                backgroundColor: '#1e293b',
+                titleFont: { family: 'Figtree', size: 10, weight: '600' },
+                bodyFont: { family: 'Figtree', size: 9 },
+                padding: 8,
+                cornerRadius: 6
+            }
+        }
+    };
+
+    document.addEventListener('DOMContentLoaded', () => {
+        setupEventListeners();
+        
+        // Fetch raw data from Apps Script API on startup
+        google.script.run
+          .withSuccessHandler(function(rawData) {
+             window.googleSheetData = rawData;
+             loadLocalData();
+          })
+          .getRawDataFromSheet();
+    });
+
+    function setupEventListeners() {
+        const tabFF = document.getElementById('tab-ff');
+        if (tabFF) tabFF.addEventListener('click', () => switchTab('ff'));
+        const tabAttrition = document.getElementById('tab-attrition');
+        if (tabAttrition) tabAttrition.addEventListener('click', () => switchTab('attrition'));
+        
+        const dropdowns = [
+            { id: 'dropdown-employee-type', btnId: 'btn-filter-type' },
+            { id: 'dropdown-hrbp-lead', btnId: 'btn-filter-hrbp' },
+            { id: 'dropdown-pl-name', btnId: 'btn-filter-pl' },
+            { id: 'dropdown-month', btnId: 'btn-filter-month' },
+            { id: 'dropdown-year', btnId: 'btn-filter-year' }
+        ];
+        
+        dropdowns.forEach(dd => {
+            const wrapper = document.getElementById(dd.id);
+            const trigger = document.getElementById(dd.btnId);
+            if (!wrapper || !trigger) return;
+            
+            trigger.addEventListener('click', (e) => {
+                e.stopPropagation();
+                dropdowns.forEach(o => {
+                    if (o.id !== dd.id) {
+                        const el = document.getElementById(o.id);
+                        if (el) el.classList.remove('open');
+                    }
+                });
+                wrapper.classList.toggle('open');
+            });
+            
+            // Prevent clicks inside the dropdown content from bubbling up to document and closing it
+            const content = wrapper.querySelector('.dropdown-content');
+            if (content) {
+                content.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                });
+            }
+        });
+        
+        document.addEventListener('click', () => {
+            let closedAny = false;
+            dropdowns.forEach(dd => {
+                const el = document.getElementById(dd.id);
+                if (el && el.classList.contains('open')) {
+                    el.classList.remove('open');
+                    closedAny = true;
+                }
+            });
+            if (closedAny) {
+                updateLocalUI();
+            }
+        });
+        
+        const customDropdown = document.getElementById('dropdown-employee-type');
+        if (customDropdown) {
+            const checkboxes = customDropdown.querySelectorAll('input[type="checkbox"]');
+            checkboxes.forEach(cb => {
+                cb.addEventListener('change', () => {
+                    const active = [];
+                    checkboxes.forEach(c => {
+                        if (c.checked) active.push(c.value);
+                    });
+                    state.filters.employeeType = active.length === 0 ? ['All'] : active;
+                    updateEmployeeTypeTriggerLabel();
+                });
+            });
+            
+            // Dynamically append OK button sticky footer to employee type dropdown content
+            const content = customDropdown.querySelector('.dropdown-content');
+            if (content) {
+                appendOkButton(content);
+            }
+        }
+        
+        const selectGender = document.getElementById('select-gender');
+        if (selectGender) {
+            selectGender.addEventListener('change', (e) => {
+                state.filters.gender = [e.target.value];
+                updateLocalUI();
+            });
+        }
+    }
+
+    function switchTab(tabId) {
+        state.activeTab = tabId;
+        document.querySelectorAll('.tab-button').forEach(btn => btn.classList.remove('active'));
+        document.querySelectorAll('.dashboard-view').forEach(view => view.classList.remove('active'));
+        
+        if (tabId === 'ff') {
+            document.getElementById('tab-ff').classList.add('active');
+            document.getElementById('view-ff').classList.add('active');
+        } else {
+            document.getElementById('tab-attrition').classList.add('active');
+            document.getElementById('view-attrition').classList.add('active');
+        }
+    }
+
+    function loadLocalData() {
+        const years = [...new Set(window.googleSheetData.map(d => new Date(d.dol).getFullYear().toString()))].sort();
+        const months = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+        const employee_types = ["Onroll", "Consultant", "Intern"];
+        const hrbp_leads = [...new Set(window.googleSheetData.map(d => d.hrbpLead))].filter(Boolean).sort();
+        const pl_names = [...new Set(window.googleSheetData.map(d => d.plName))].filter(Boolean).sort();
+        const genders = ["Female", "Male"];
+        
+        apiPopulateFilters({ years, months, employee_types, hrbp_leads, pl_names, genders });
+        updateLocalUI();
+    }
+
+    function apiPopulateFilters(filters) {
+        const hrbpContent = document.getElementById('dropdown-hrbp-content');
+        if (hrbpContent && filters.hrbp_leads) {
+            hrbpContent.innerHTML = `<label class="dropdown-option"><input type="checkbox" id="chk-hrbp-all" value="All" checked> <em>All Leads</em></label>`;
+            filters.hrbp_leads.forEach(l => {
+                hrbpContent.innerHTML += `<label class="dropdown-option"><input type="checkbox" name="chk-hrbp" value="${l}" checked> ${l}</label>`;
+            });
+            setupCheckboxGroup('chk-hrbp-all', 'chk-hrbp', 'hrbpLead', updateHRBPTriggerLabel);
+        }
+        
+        const plContent = document.getElementById('dropdown-pl-content');
+        if (plContent && filters.pl_names) {
+            plContent.innerHTML = `<label class="dropdown-option"><input type="checkbox" id="chk-pl-all" value="All" checked> <em>All P&Ls</em></label>`;
+            filters.pl_names.forEach(p => {
+                plContent.innerHTML += `<label class="dropdown-option"><input type="checkbox" name="chk-pl" value="${p}" checked> ${p}</label>`;
+            });
+            setupCheckboxGroup('chk-pl-all', 'chk-pl', 'plName', updatePLTriggerLabel);
+        }
+        
+        const monthContent = document.getElementById('dropdown-month-content');
+        if (monthContent && filters.months) {
+            monthContent.innerHTML = `<label class="dropdown-option"><input type="checkbox" id="chk-month-all" value="All" checked> <em>All Months</em></label>`;
+            filters.months.forEach(m => {
+                monthContent.innerHTML += `<label class="dropdown-option"><input type="checkbox" name="chk-month" value="${m}" checked> ${m}</label>`;
+            });
+            setupCheckboxGroup('chk-month-all', 'chk-month', 'month', updateMonthTriggerLabel);
+        }
+        
+        const yearContent = document.getElementById('dropdown-year-content');
+        if (yearContent && filters.years) {
+            yearContent.innerHTML = `<label class="dropdown-option"><input type="checkbox" id="chk-year-all" value="All" checked> <em>All Years</em></label>`;
+            filters.years.forEach(y => {
+                yearContent.innerHTML += `<label class="dropdown-option"><input type="checkbox" name="chk-year" value="${y}" checked> ${y}</label>`;
+            });
+            setupCheckboxGroup('chk-year-all', 'chk-year', 'year', updateYearTriggerLabel);
+        }
+        
+        updateHRBPTriggerLabel();
+        updatePLTriggerLabel();
+        updateMonthTriggerLabel();
+        updateYearTriggerLabel();
+        updateEmployeeTypeTriggerLabel();
+        
+        appendOkButton('dropdown-hrbp-content');
+        appendOkButton('dropdown-pl-content');
+        appendOkButton('dropdown-month-content');
+        appendOkButton('dropdown-year-content');
+    }
+
+    function appendOkButton(target) {
+        const content = typeof target === 'string' ? document.getElementById(target) : target;
+        if (!content) return;
+        
+        if (content.querySelector('.btn-ok-footer')) return;
+        
+        const footer = document.createElement('div');
+        footer.className = 'btn-ok-footer';
+        footer.style.padding = '0.35rem 0.5rem';
+        footer.style.borderTop = '1px solid var(--color-border)';
+        footer.style.textAlign = 'right';
+        footer.style.background = 'var(--color-bg-card-hover)';
+        footer.style.position = 'sticky';
+        footer.style.bottom = '0';
+        footer.style.zIndex = '10';
+        
+        const btn = document.createElement('button');
+        btn.textContent = 'OK';
+        btn.style.fontFamily = 'inherit';
+        btn.style.fontSize = '0.688rem';
+        btn.style.fontWeight = '700';
+        btn.style.padding = '0.2rem 0.6rem';
+        btn.style.backgroundColor = 'var(--color-blue-primary)';
+        btn.style.color = '#ffffff';
+        btn.style.border = 'none';
+        btn.style.borderRadius = 'var(--radius-sm)';
+        btn.style.cursor = 'pointer';
+        
+        btn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            const wrapper = content.closest('.custom-dropdown');
+            if (wrapper) wrapper.classList.remove('open');
+            updateLocalUI();
+        });
+        
+        footer.appendChild(btn);
+        content.appendChild(footer);
+    }
+
+    function setupCheckboxGroup(allId, name, stateKey, labelFn) {
+        const allCb = document.getElementById(allId);
+        const container = allCb.closest('.dropdown-content');
+        const getItems = () => container.querySelectorAll(`input[name="${name}"]`);
+        
+        allCb.addEventListener('change', () => {
+            const itemCbs = getItems();
+            if (allCb.checked) {
+                itemCbs.forEach(cb => cb.checked = true);
+                state.filters[stateKey] = ['All'];
+            } else {
+                itemCbs.forEach(cb => cb.checked = false);
+                state.filters[stateKey] = [];
+            }
+            labelFn();
+        });
+        
+        container.addEventListener('change', (e) => {
+            if (e.target.name === name) {
+                const itemCbs = getItems();
+                const checked = Array.from(itemCbs).filter(cb => cb.checked).map(cb => cb.value);
+                if (checked.length === itemCbs.length) {
+                    allCb.checked = true;
+                    state.filters[stateKey] = ['All'];
+                } else {
+                    allCb.checked = false;
+                    state.filters[stateKey] = checked;
+                }
+                labelFn();
+            }
+        });
+    }
+
+    function updateEmployeeTypeTriggerLabel() {
+        const items = state.filters.employeeType;
+        const btn = document.getElementById('btn-filter-type');
+        if (btn) btn.textContent = items.includes('All') ? 'All Types' : items.join(', ');
+    }
+    function updateHRBPTriggerLabel() {
+        const items = state.filters.hrbpLead;
+        const btn = document.getElementById('btn-filter-hrbp');
+        if (btn) btn.textContent = items.includes('All') ? 'All Leads' : items.join(', ');
+    }
+    function updatePLTriggerLabel() {
+        const items = state.filters.plName;
+        const btn = document.getElementById('btn-filter-pl');
+        if (btn) btn.textContent = items.includes('All') ? 'All P&L' : items.join(', ');
+    }
+    function updateMonthTriggerLabel() {
+        const items = state.filters.month;
+        const btn = document.getElementById('btn-filter-month');
+        if (btn) btn.textContent = items.includes('All') ? 'All Months' : items.join(', ');
+    }
+    function updateYearTriggerLabel() {
+        const items = state.filters.year;
+        const btn = document.getElementById('btn-filter-year');
+        if (btn) btn.textContent = items.includes('All') ? 'All Years' : items.join(', ');
+    }
+
+    function getFilteredLocalData(data, filters) {
+        const monthNames = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+        return data.filter(d => {
+            if (filters.employeeType && !filters.employeeType.includes('All')) {
+                if (!filters.employeeType.includes(d.employeeType)) return false;
+            }
+            if (filters.hrbpLead && !filters.hrbpLead.includes('All')) {
+                if (!filters.hrbpLead.includes(d.hrbpLead)) return false;
+            }
+            if (filters.plName && !filters.plName.includes('All')) {
+                if (!filters.plName.includes(d.plName)) return false;
+            }
+            if (filters.gender && !filters.gender.includes('All')) {
+                if (!filters.gender.includes(d.gender)) return false;
+            }
+            if (filters.year && !filters.year.includes('All')) {
+                const dolYear = new Date(d.dol).getFullYear().toString();
+                if (!filters.year.includes(dolYear)) return false;
+            }
+            if (filters.month && !filters.month.includes('All')) {
+                const dolMonth = monthNames[new Date(d.dol).getMonth()];
+                if (!filters.month.includes(dolMonth)) return false;
+            }
+            return true;
+        });
+    }
+
+    function updateLocalUI() {
+        if (!window.googleSheetData) return;
+        
+        const filtered = getFilteredLocalData(window.googleSheetData, state.filters);
+        state.rawExits = filtered;
+        
+        // 1. Calculate and Render F&F Total KPI
+        const totalCases = filtered.length;
+        document.getElementById('kpi-ff-total').textContent = totalCases.toLocaleString();
+        
+        // 2. Average TAT KPI
+        const tatRows = filtered.filter(d => d.ageing !== null && d.ageing !== undefined);
+        const avgTat = tatRows.length > 0 ? (tatRows.reduce((sum, d) => sum + d.ageing, 0) / tatRows.length) : 0;
+        document.getElementById('kpi-ff-avg-tat').textContent = `${avgTat.toFixed(1)} days`;
+        
+        // 3. Populate Clearance Summary Card
+        const settledCount = filtered.filter(d => d.clearanceStatus === 'Settled').length;
+        const pendingCount = totalCases - settledCount;
+        document.getElementById('lbl-summary-total').textContent = totalCases.toLocaleString();
+        document.getElementById('lbl-summary-settled').textContent = settledCount.toLocaleString();
+        document.getElementById('lbl-summary-pending').textContent = pendingCount.toLocaleString();
+        
+        // 4. Payable vs Recovery (Doughnut)
+        const payable = filtered.filter(d => d.ffStatus === 'Payable').length;
+        const recovery = filtered.filter(d => d.ffStatus === 'Recovery').length;
+        renderPayableVsRecoveryChart(payable, recovery);
+        
+        // 5. Total F&F Payout by P&L (Table)
+        const plPayouts = {};
+        filtered.filter(d => d.ffStatus === 'Payable').forEach(d => {
+            const pl = d.plName;
+            if (!plPayouts[pl]) plPayouts[pl] = { plName: pl, headcount: 0, totalPayout: 0 };
+            plPayouts[pl].headcount++;
+            plPayouts[pl].totalPayout += d.finalAmountAE || 0;
+        });
+        const payoutRows = Object.values(plPayouts).sort((a, b) => b.totalPayout - a.totalPayout);
+        renderPayoutPlTable(payoutRows);
+        
+        // 6. Recovery & Settlement Analysis (Table)
+        const plRecoveries = {};
+        filtered.filter(d => d.ffStatus === 'Recovery').forEach(d => {
+            const pl = d.plName;
+            if (!plRecoveries[pl]) plRecoveries[pl] = { plName: pl, recoveredHeadcount: 0, totalRecovered: 0, unrecoveredHeadcount: 0, totalUnrecovered: 0 };
+            const g = plRecoveries[pl];
+            g.totalUnrecovered += Math.abs(d.finalAmountAE || 0);
+            if (d.finalAmountAE !== d.ffAmountAA) {
+                g.recoveredHeadcount++;
+                g.unrecoveredHeadcount++;
+                g.totalRecovered += Math.abs(d.finalAmountAE - d.ffAmountAA);
+            }
+        });
+        const recoveryRows = Object.values(plRecoveries).sort((a, b) => b.totalUnrecovered - a.totalUnrecovered);
+        renderRecoveryAnalysisTable(recoveryRows);
+        
+        // 7. Ageing Buckets (Stacked Bar)
+        const monthNames = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+        const ageingMonthGroups = {};
+        filtered.forEach(d => {
+            const m = monthNames[new Date(d.dol).getMonth()];
+            if (!ageingMonthGroups[m]) ageingMonthGroups[m] = { month: m, bucket1_2: 0, bucket2_plus: 0, monthNum: new Date(d.dol).getMonth() };
+            if (d.ageing <= 2) ageingMonthGroups[m].bucket1_2++;
+            else ageingMonthGroups[m].bucket2_plus++;
+        });
+        const bucketsData = Object.values(ageingMonthGroups).sort((a, b) => a.monthNum - b.monthNum);
+        renderAgeingBucketsChart(bucketsData);
+        
+        // 8. NDC Clearance (Stacked Bar)
+        let hrbpOntime = 0, hrbpDelay = 0;
+        let itOntime = 0, itDelay = 0;
+        let financeOntime = 0, financeDelay = 0;
+        let adminOntime = 0, adminDelay = 0;
+        filtered.forEach(d => {
+            if (d.hrbpNdc === d.dol && d.dol) hrbpOntime++; else hrbpDelay++;
+            if (d.itNdc === d.dol && d.dol) itOntime++; else itDelay++;
+            if (d.financeNdc === d.dol && d.dol) financeOntime++; else financeDelay++;
+            if (d.adminNdc === d.dol && d.dol) adminOntime++; else adminDelay++;
+        });
+        const ndcData = [
+            { dept: "HRBP", ontime: hrbpOntime, delay: hrbpDelay },
+            { dept: "IT", ontime: itOntime, delay: itDelay },
+            { dept: "Finance", ontime: financeOntime, delay: financeDelay },
+            { dept: "Admin", ontime: adminOntime, delay: adminDelay }
+        ];
+        renderNdcChart(ndcData);
+        
+        // --- Attrition Tab Updates ---
+        document.getElementById('kpi-attrition-total').textContent = totalCases.toLocaleString();
+        const activeFallback = Math.max(10, totalCases * 6);
+        const rate = (totalCases / activeFallback) * 100;
+        document.getElementById('kpi-attrition-rate').textContent = `${rate.toFixed(1)}%`;
+        
+        const volExits = filtered.filter(d => d.exitType === 'Voluntary').length;
+        const involExits = totalCases - volExits;
+        renderVoluntaryVsInvoluntaryChart(volExits, involExits);
+        
+        let bLess1 = 0, b1_2_yrs = 0, b2_4 = 0, b4_plus = 0;
+        filtered.forEach(d => {
+            if (d.tenureMonths < 12) bLess1++;
+            else if (d.tenureMonths <= 24) b1_2_yrs++;
+            else if (d.tenureMonths <= 48) b2_4++;
+            else b4_plus++;
+        });
+        renderTenureChart({ "less than 1 year": bLess1, "1-2 yrs": b1_2_yrs, "2-4 years": b2_4, "4-10 yrs": b4_plus });
+        
+        const hrbpGroups = {};
+        filtered.forEach(d => {
+            const h = d.hrbpLead;
+            if (!hrbpGroups[h]) hrbpGroups[h] = { voluntary: 0, involuntary: 0 };
+            if (d.exitType === 'Voluntary') hrbpGroups[h].voluntary++;
+            else hrbpGroups[h].involuntary++;
+        });
+        const targetHrbps = ['Asha Khan', 'Tanu Srivastava', 'Janhavi Malhotra', 'Charvi Sarin'];
+        renderHrbpExitsChart(targetHrbps.map(h => ({
+            hrbp: h,
+            voluntary: hrbpGroups[h] ? hrbpGroups[h].voluntary : 0,
+            involuntary: hrbpGroups[h] ? hrbpGroups[h].involuntary : 0
+        })));
+        
+        const empTypeBreakdown = { Onroll: 0, Consultant: 0, Intern: 0 };
+        filtered.forEach(d => {
+            if (empTypeBreakdown[d.employeeType] !== undefined) empTypeBreakdown[d.employeeType]++;
+        });
+        renderEmployeeTypeCards(empTypeBreakdown);
+        
+        const reasonCounts = {};
+        filtered.forEach(d => {
+            const r = d.reasonForLeaving || 'Unassigned';
+            reasonCounts[r] = (reasonCounts[r] || 0) + 1;
+        });
+        const reasonsData = Object.keys(reasonCounts).map(r => ({
+            reason: r,
+            count: reasonCounts[r],
+            pct: (reasonCounts[r] / (totalCases || 1)) * 100
+        })).sort((a, b) => b.count - a.count);
+        renderAttritionReasonsTable(reasonsData);
+        
+        const monthlyCounts = {};
+        filtered.forEach(d => {
+            const date = new Date(d.dol);
+            const ym = date.getFullYear() + '-' + String(date.getMonth() + 1).padStart(2, '0');
+            const label = monthNames[date.getMonth()] + ' ' + date.getFullYear();
+            if (!monthlyCounts[ym]) monthlyCounts[ym] = { label: label, exitCount: 0 };
+            monthlyCounts[ym].exitCount++;
+        });
+        const sortedYm = Object.keys(monthlyCounts).sort();
+        let currentHc = activeFallback;
+        const monthlyRateRows = [];
+        for (let i = sortedYm.length - 1; i >= 0; i--) {
+            const ym = sortedYm[i];
+            const g = monthlyCounts[ym];
+            const startHc = currentHc + g.exitCount;
+            const rate = ((g.exitCount / startHc) * 100);
+            monthlyRateRows.unshift({
+                monthLabel: g.label,
+                startHeadcount: startHc,
+                exitCount: g.exitCount,
+                rate: rate
+            });
+            currentHc = startHc;
+        }
+        renderMonthlyAttritionRateTable(monthlyRateRows);
+    }
+
+    function renderPayableVsRecoveryChart(payable, recovery) {
+        const ctxStatus = document.getElementById('chart-ff-payment-type').getContext('2d');
+        if (charts.ffStatus) charts.ffStatus.destroy();
+        const total = (payable + recovery) || 1;
+        charts.ffStatus = new Chart(ctxStatus, {
+            type: 'doughnut',
+            data: {
+                labels: [`Payable: ${payable} (${((payable/total)*100).toFixed(1)}%)`, `Recovery: ${recovery} (${((recovery/total)*100).toFixed(1)}%)`],
+                datasets: [{ data: [payable, recovery], backgroundColor: ['#FF6F61', '#1A1A1A'], borderWidth: 1.5, borderColor: '#ffffff' }]
+            },
+            options: { ...commonChartOptions, cutout: '70%' }
+        });
+    }
+
+    function renderPayoutPlTable(rows) {
+        const tbody = document.getElementById('tbody-ff-payout-pl');
+        if (!tbody) return;
+        tbody.innerHTML = '';
+        if (rows.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="3" class="align-center">No records found.</td></tr>';
+            return;
+        }
+        rows.forEach(item => {
+            const tr = document.createElement('tr');
+            tr.innerHTML = `<td><strong>${item.plName}</strong></td><td class="align-right">${item.headcount}</td><td class="align-right">₹${item.totalPayout.toLocaleString(undefined, { maximumFractionDigits: 0 })}</td>`;
+            tbody.appendChild(tr);
+        });
+    }
+
+    function renderRecoveryAnalysisTable(rows) {
+        const tbody = document.getElementById('tbody-ff-recovery-analysis');
+        if (!tbody) return;
+        tbody.innerHTML = '';
+        if (rows.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="5" class="align-center">No recovery cases found.</td></tr>';
+            return;
+        }
+        rows.forEach(item => {
+            const tr = document.createElement('tr');
+            tr.innerHTML = `<td><strong>${item.plName}</strong></td><td class="align-right">${item.recoveredHeadcount}</td><td class="align-right">₹${item.totalRecovered.toLocaleString(undefined, { maximumFractionDigits: 0 })}</td><td class="align-right">${item.unrecoveredHeadcount}</td><td class="align-right">₹${item.totalUnrecovered.toLocaleString(undefined, { maximumFractionDigits: 0 })}</td>`;
+            tbody.appendChild(tr);
+        });
+    }
+
+    function renderAgeingBucketsChart(bucketsData) {
+        const ctxBuckets = document.getElementById('chart-ff-buckets').getContext('2d');
+        if (charts.ffBuckets) charts.ffBuckets.destroy();
+        const months = bucketsData.map(item => item.month);
+        const b1_2 = bucketsData.map(item => item.bucket1_2);
+        const b2_plus = bucketsData.map(item => item.bucket2_plus);
+        charts.ffBuckets = new Chart(ctxBuckets, {
+            type: 'bar',
+            data: {
+                labels: months,
+                datasets: [
+                    { label: '1-2 days', data: b1_2, backgroundColor: 'rgba(255, 111, 97, 0.85)', borderRadius: 4 },
+                    { label: '2+ days', data: b2_plus, backgroundColor: 'rgba(26, 26, 26, 0.85)', borderRadius: 4 }
+                ]
+            },
+            options: {
+                ...commonChartOptions,
+                scales: {
+                    x: { stacked: true, grid: { display: false } },
+                    y: { stacked: true, grid: { color: '#f1f5f9' } }
+                },
+                plugins: {
+                    ...commonChartOptions.plugins,
+                    datalabels: {
+                        display: true, anchor: 'center', align: 'center', color: '#ffffff', font: { family: 'Figtree', size: 8, weight: '600' },
+                        formatter: (value, context) => {
+                            const dataIndex = context.dataIndex;
+                            const chart = context.chart;
+                            const val1 = Number(chart.data.datasets[0].data[dataIndex]) || 0;
+                            const val2 = Number(chart.data.datasets[1].data[dataIndex]) || 0;
+                            const sum = val1 + val2;
+                            if (sum === 0 || value === 0) return '';
+                            const pct = ((value / sum) * 100).toFixed(0) + '%';
+                            return `${value}\n(${pct})`;
+                        }
+                    }
+                }
+            }
+        });
+    }
+
+    function renderNdcChart(ndcData) {
+        const ctxRadar = document.getElementById('chart-ff-ndc-clearance').getContext('2d');
+        if (charts.ndcRadar) charts.ndcRadar.destroy();
+        const depts = ndcData.map(item => item.dept);
+        const ontimes = ndcData.map(item => item.ontime);
+        const delays = ndcData.map(item => item.delay);
+        charts.ndcRadar = new Chart(ctxRadar, {
+            type: 'bar',
+            data: {
+                labels: depts,
+                datasets: [
+                    { label: 'Ontime', data: ontimes, backgroundColor: 'rgba(255, 111, 97, 0.85)', borderRadius: 4 },
+                    { label: 'Delay', data: delays, backgroundColor: 'rgba(26, 26, 26, 0.85)', borderRadius: 4 }
+                ]
+            },
+            options: {
+                ...commonChartOptions,
+                scales: {
+                    x: { stacked: true, grid: { display: false } },
+                    y: { stacked: true, grid: { color: '#f1f5f9' } }
+                },
+                plugins: {
+                    ...commonChartOptions.plugins,
+                    datalabels: {
+                        display: true, anchor: 'center', align: 'center', color: '#ffffff', font: { family: 'Figtree', size: 8, weight: '600' },
+                        formatter: (value, context) => {
+                            const dataIndex = context.dataIndex;
+                            const chart = context.chart;
+                            const val1 = Number(chart.data.datasets[0].data[dataIndex]) || 0;
+                            const val2 = Number(chart.data.datasets[1].data[dataIndex]) || 0;
+                            const sum = val1 + val2;
+                            if (sum === 0 || value === 0) return '';
+                            const pct = ((value / sum) * 100).toFixed(0) + '%';
+                            return `${value}\n(${pct})`;
+                        }
+                    },
+                    tooltip: {
+                        callbacks: {
+                            label: function (context) {
+                                const label = context.dataset.label || '';
+                                const val = context.raw || 0;
+                                const idx = context.dataIndex;
+                                const total = ontimes[idx] + delays[idx];
+                                const pct = total > 0 ? ((val / total) * 100).toFixed(1) : '0.0';
+                                return `${label}: ${val} (${pct}%)`;
+                            }
+                        }
+                    }
+                }
+            }
+        });
+    }
+
+    function renderVoluntaryVsInvoluntaryChart(vol, invol) {
+        const ctxVol = document.getElementById('chart-attrition-voluntary').getContext('2d');
+        if (charts.attritionVoluntary) charts.attritionVoluntary.destroy();
+        const tot = (vol + invol) || 1;
+        charts.attritionVoluntary = new Chart(ctxVol, {
+            type: 'doughnut',
+            data: {
+                labels: [`Voluntary: ${vol} (${((vol/tot)*100).toFixed(1)}%)`, `Involuntary: ${invol} (${((invol/tot)*100).toFixed(1)}%)`],
+                datasets: [{ data: [vol, invol], backgroundColor: ['#FF6F61', '#1A1A1A'], borderWidth: 1.5, borderColor: '#ffffff' }]
+            },
+            options: { ...commonChartOptions, cutout: '70%' }
+        });
+    }
+
+    function renderTenureChart(buckets) {
+        const ctxTenure = document.getElementById('chart-attrition-tenure').getContext('2d');
+        if (charts.attritionTenure) charts.attritionTenure.destroy();
+        const tenureLabels = Object.keys(buckets);
+        const tenureValues = Object.values(buckets);
+        const totalTenure = tenureValues.reduce((sum, c) => sum + c, 0) || 1;
+        const displayLabels = tenureLabels.map((lbl, idx) => {
+            const count = tenureValues[idx];
+            const pct = ((count / totalTenure) * 100).toFixed(1);
+            return `${lbl}: ${count} (${pct}%)`;
+        });
+        charts.attritionTenure = new Chart(ctxTenure, {
+            type: 'doughnut',
+            data: {
+                labels: displayLabels,
+                datasets: [{ data: tenureValues, backgroundColor: ['#FF6F61', '#1A1A1A', '#757575', '#E0E0E0'], borderWidth: 1.5, borderColor: '#ffffff' }]
+            },
+            options: { ...commonChartOptions, cutout: '70%' }
+        });
+    }
+
+    function renderHrbpExitsChart(hrbpRows) {
+        const ctxPl = document.getElementById('chart-attrition-pl').getContext('2d');
+        if (charts.attritionPl) charts.attritionPl.destroy();
+        charts.attritionPl = new Chart(ctxPl, {
+            type: 'bar',
+            data: {
+                labels: hrbpRows.map(r => r.hrbp),
+                datasets: [
+                    { label: 'Voluntary', data: hrbpRows.map(r => r.voluntary), backgroundColor: 'rgba(255, 111, 97, 0.85)', borderRadius: 4 },
+                    { label: 'Involuntary', data: hrbpRows.map(r => r.involuntary), backgroundColor: 'rgba(26, 26, 26, 0.85)', borderRadius: 4 }
+                ]
+            },
+            options: {
+                ...commonChartOptions,
+                scales: {
+                    x: { stacked: false, grid: { display: false } },
+                    y: { stacked: false, grid: { color: '#f1f5f9' } }
+                },
+                plugins: {
+                    ...commonChartOptions.plugins,
+                    datalabels: {
+                        display: true, anchor: 'end', align: 'top', color: '#1a1a1a', offset: 1,
+                        formatter: (value) => value > 0 ? value : ''
+                    }
+                }
+            }
+        });
+    }
+
+    function renderEmployeeTypeCards(data) {
+        const tbodyType = document.getElementById('tbody-attrition-type');
+        if (!tbodyType) return;
+        tbodyType.innerHTML = '';
+        Object.keys(data).forEach(t => {
+            const card = document.createElement('div');
+            card.style.flex = '1';
+            card.style.padding = '0.4rem 0.6rem';
+            card.style.background = 'var(--color-bg-card-hover)';
+            card.style.border = '1px solid var(--color-border)';
+            card.style.borderRadius = 'var(--radius-sm)';
+            card.style.display = 'flex';
+            card.style.justifyContent = 'space-between';
+            card.style.alignItems = 'center';
+            card.style.fontSize = '0.75rem';
+            card.innerHTML = `<span style="font-weight: 600; color: var(--color-text-muted);">${t}</span><strong style="color: var(--color-text-title); font-size: 0.813rem;">${data[t].toLocaleString()}</strong>`;
+            tbodyType.appendChild(card);
+        });
+    }
+
+    function renderAttritionReasonsTable(reasons) {
+        const tbody = document.getElementById('tbody-attrition-reasons-total');
+        if (!tbody) return;
+        tbody.innerHTML = '';
+        if (reasons.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="3" class="align-center">No records found.</td></tr>';
+            return;
+        }
+        reasons.slice(0, 5).forEach(item => {
+            const tr = document.createElement('tr');
+            tr.innerHTML = `<td><strong>${item.reason}</strong></td><td class="align-right">${item.count}</td><td class="align-right">${item.pct.toFixed(1)}%</td>`;
+            tbody.appendChild(tr);
+        });
+    }
+
+    function renderMonthlyAttritionRateTable(rows) {
+        const tbody = document.getElementById('tbody-attrition-monthly-rate');
+        if (!tbody) return;
+        tbody.innerHTML = '';
+        if (rows.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="4" class="align-center">No historical months found.</td></tr>';
+            return;
+        }
+        rows.forEach(row => {
+            const tr = document.createElement('tr');
+            tr.innerHTML = `<td><strong>${row.monthLabel}</strong></td><td class="align-right">${row.startHeadcount.toLocaleString()}</td><td class="align-right">${row.exitCount.toLocaleString()}</td><td class="align-right" style="font-weight: 600; color: var(--color-blue-primary);">${row.rate.toFixed(1)}%</td>`;
+            tbody.appendChild(tr);
+        });
+    }
+  </script>
+</body>
+</html>

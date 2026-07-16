@@ -189,6 +189,10 @@ def sync_google_sheets(override_sheet_id=None):
             if not emp_code or emp_code.lower() == 'nan' or emp_code == '':
                 continue # Skip empty rows
             
+            dol = parse_date(clean_row.get('dol') or clean_row.get('date of leaving'))
+            if not dol:
+                continue # Skip rows without a valid date of leaving
+            
             raw_rows.append(clean_row)
             
             # Map values

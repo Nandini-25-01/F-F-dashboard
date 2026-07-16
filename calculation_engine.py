@@ -159,13 +159,13 @@ def calculate_widget_data(widget_id, filters):
         
         # Execute based on widget type
         if widget_id == 'total_ff_cases':
-            query = f"SELECT COUNT(employee_id) AS val FROM processed_data WHERE snapshot_id = %s {filter_sql}"
+            query = f"SELECT COUNT(name) AS val FROM processed_data WHERE snapshot_id = %s AND dol IS NOT NULL {filter_sql}"
             cur.execute(query, [snapshot_id] + params)
             res = cur.fetchone()
             return {"value": res['val'] if res else 0}
             
         elif widget_id == 'average_tat':
-            query = f"SELECT AVG(ff_ageing) AS val FROM processed_data WHERE snapshot_id = %s AND ff_ageing IS NOT NULL {filter_sql}"
+            query = f"SELECT AVG(ff_ageing) AS val FROM processed_data WHERE snapshot_id = %s AND ff_ageing IS NOT NULL AND dol IS NOT NULL {filter_sql}"
             cur.execute(query, [snapshot_id] + params)
             res = cur.fetchone()
             return {"value": float(res['val']) if res and res['val'] is not None else 0.0}
@@ -177,7 +177,7 @@ def calculate_widget_data(widget_id, filters):
                     COALESCE(ff_status, 'Payable') AS status, 
                     COUNT(*) AS count 
                 FROM processed_data 
-                WHERE snapshot_id = %s {filter_sql}
+                WHERE snapshot_id = %s AND dol IS NOT NULL {filter_sql}
                 GROUP BY ff_status
             """
             cur.execute(query, [snapshot_id] + params)
@@ -197,7 +197,7 @@ def calculate_widget_data(widget_id, filters):
                     COUNT(*) AS headcount,
                     SUM(final_ff_amount_ae) AS total_payout
                 FROM processed_data 
-                WHERE snapshot_id = %s AND ff_status = 'Payable' {filter_sql}
+                WHERE snapshot_id = %s AND ff_status = 'Payable' AND dol IS NOT NULL {filter_sql}
                 GROUP BY pl_name
                 ORDER BY total_payout DESC
             """
@@ -218,10 +218,10 @@ def calculate_widget_data(widget_id, filters):
                 SELECT 
                     pl_name,
                     SUM(ABS(final_ff_amount_ae)) AS unrecovered_amount,
-                    SUM(ABS(ff_amount_aa) - ABS(final_ff_amount_ae)) AS recovered_amount,
-                    COUNT(CASE WHEN ABS(final_ff_amount_ae) != ABS(ff_amount_aa) THEN 1 END) AS headcount
+                    SUM(ABS(final_ff_amount_ae - ff_amount_aa)) AS recovered_amount,
+                    COUNT(CASE WHEN final_ff_amount_ae != ff_amount_aa THEN 1 END) AS headcount
                 FROM processed_data 
-                WHERE snapshot_id = %s AND ff_status = 'Recovery' {filter_sql}
+                WHERE snapshot_id = %s AND ff_status = 'Recovery' AND dol IS NOT NULL {filter_sql}
                 GROUP BY pl_name
                 ORDER BY unrecovered_amount DESC
             """
@@ -244,7 +244,7 @@ def calculate_widget_data(widget_id, filters):
                 SELECT 
                     TO_CHAR(dol, 'FMMonth') AS month_name,
                     EXTRACT(MONTH FROM dol) AS month_num,
-                    COUNT(CASE WHEN ff_ageing >= 1 AND ff_ageing <= 2 THEN 1 END) AS bucket_1_2,
+                    COUNT(CASE WHEN ff_ageing <= 2 THEN 1 END) AS bucket_1_2,
                     COUNT(CASE WHEN ff_ageing > 2 THEN 1 END) AS bucket_2_plus
                 FROM processed_data 
                 WHERE snapshot_id = %s AND dol IS NOT NULL {filter_sql}
@@ -267,13 +267,13 @@ def calculate_widget_data(widget_id, filters):
             query = f"""
                 SELECT 
                     COUNT(CASE WHEN hrbp_ndc_date = dol THEN 1 END) AS hrbp_ontime,
-                    COUNT(CASE WHEN hrbp_ndc_date IS NOT NULL AND hrbp_ndc_date != dol THEN 1 END) AS hrbp_delay,
+                    COUNT(CASE WHEN hrbp_ndc_date IS NULL OR hrbp_ndc_date != dol THEN 1 END) AS hrbp_delay,
                     COUNT(CASE WHEN it_ndc_date = dol THEN 1 END) AS it_ontime,
-                    COUNT(CASE WHEN it_ndc_date IS NOT NULL AND it_ndc_date != dol THEN 1 END) AS it_delay,
+                    COUNT(CASE WHEN it_ndc_date IS NULL OR it_ndc_date != dol THEN 1 END) AS it_delay,
                     COUNT(CASE WHEN finance_ndc_date = dol THEN 1 END) AS finance_ontime,
-                    COUNT(CASE WHEN finance_ndc_date IS NOT NULL AND finance_ndc_date != dol THEN 1 END) AS finance_delay,
+                    COUNT(CASE WHEN finance_ndc_date IS NULL OR finance_ndc_date != dol THEN 1 END) AS finance_delay,
                     COUNT(CASE WHEN admin_ndc_date = dol THEN 1 END) AS admin_ontime,
-                    COUNT(CASE WHEN admin_ndc_date IS NOT NULL AND admin_ndc_date != dol THEN 1 END) AS admin_delay
+                    COUNT(CASE WHEN admin_ndc_date IS NULL OR admin_ndc_date != dol THEN 1 END) AS admin_delay
                 FROM processed_data 
                 WHERE snapshot_id = %s AND dol IS NOT NULL {filter_sql}
             """

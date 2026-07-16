@@ -1,5 +1,7 @@
 import os
 import asyncio
+import socket
+import threading
 from fastapi import FastAPI, Request
 from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel
@@ -15,6 +17,12 @@ from calculation_engine import (
     get_raw_exit_list,
     DB_USER, DB_HOST, DB_PORT, TARGET_DB
 )
+
+# Set global socket timeout of 15 seconds to prevent gspread/Google API requests from hanging indefinitely
+socket.setdefaulttimeout(15)
+
+# Threading lock to prevent concurrent sync operations from deadlocking the Postgres database
+sync_lock = threading.Lock()
 
 app = FastAPI(title="F&F Settlement Dashboard Backend", version="1.0")
 
@@ -43,8 +51,16 @@ async def run_sync_periodically():
     await asyncio.sleep(5)
     while True:
         try:
-            print("[Background Worker] Syncing Google Sheet data...")
-            sync_google_sheets()
+            # Try to acquire lock non-blocking. Skip if another sync is currently running.
+            acquired = sync_lock.acquire(blocking=False)
+            if acquired:
+                try:
+                    print("[Background Worker] Syncing Google Sheet data...")
+                    sync_google_sheets()
+                finally:
+                    sync_lock.release()
+            else:
+                print("[Background Worker] Sync skipped: lock is held by another process.")
         except Exception as e:
             print("[Background Worker] Sync task error:", e)
         # Sleep for 60 seconds
@@ -122,11 +138,22 @@ def api_sync(req: Optional[SyncRequest] = None):
         else:
             override_id = req.url.strip()
             
-    success = sync_google_sheets(override_sheet_id=override_id)
-    if success:
-        return JSONResponse(content={"success": True})
-    else:
-        return JSONResponse(status_code=500, content={"success": False, "error": "Sync task failed."})
+    # Try to acquire lock with 2-second timeout to avoid locking the thread indefinitely
+    acquired = sync_lock.acquire(timeout=2.0)
+    if not acquired:
+        return JSONResponse(
+            status_code=409, 
+            content={"success": False, "error": "Another sync is currently in progress. Please try again in a few moments."}
+        )
+        
+    try:
+        success = sync_google_sheets(override_sheet_id=override_id)
+        if success:
+            return JSONResponse(content={"success": True})
+        else:
+            return JSONResponse(status_code=500, content={"success": False, "error": "Sync task failed."})
+    finally:
+        sync_lock.release()
 
 @app.get("/api/sync/history")
 def api_sync_history():
