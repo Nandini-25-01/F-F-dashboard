@@ -15,7 +15,7 @@ from calculation_engine import (
     get_filter_options,
     calculate_widget_data,
     get_raw_exit_list,
-    DB_USER, DB_HOST, DB_PORT, TARGET_DB
+    DB_USER, DB_HOST, DB_PORT, TARGET_DB, DB_PASSWORD
 )
 
 # Set global socket timeout of 15 seconds to prevent gspread/Google API requests from hanging indefinitely
@@ -41,6 +41,7 @@ def get_connection():
         host=DB_HOST,
         port=DB_PORT,
         user=DB_USER,
+        password=DB_PASSWORD,
         dbname=TARGET_DB,
         cursor_factory=RealDictCursor
     )

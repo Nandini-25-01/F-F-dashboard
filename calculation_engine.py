@@ -3,6 +3,7 @@ import psycopg2
 from psycopg2.extras import RealDictCursor
 
 DB_USER = "Hp"
+DB_PASSWORD = "fnfdashboard"
 DB_HOST = "localhost"
 DB_PORT = "5432"
 TARGET_DB = "ff_dashboard"
@@ -12,6 +13,7 @@ def get_connection():
         host=DB_HOST,
         port=DB_PORT,
         user=DB_USER,
+        password=DB_PASSWORD,
         dbname=TARGET_DB,
         cursor_factory=RealDictCursor
     )

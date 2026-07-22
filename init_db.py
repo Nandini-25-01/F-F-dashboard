@@ -4,6 +4,7 @@ import psycopg2
 from psycopg2.extras import Json
 
 DB_USER = "Hp"
+DB_PASSWORD = "fnfdashboard"
 DB_HOST = "localhost"
 DB_PORT = "5432"
 DEFAULT_DB = "postgres"
@@ -14,6 +15,7 @@ def get_connection(dbname=DEFAULT_DB):
         host=DB_HOST,
         port=DB_PORT,
         user=DB_USER,
+        password=DB_PASSWORD,
         dbname=dbname
     )
 
